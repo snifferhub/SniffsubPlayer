@@ -1,0 +1,14 @@
+.DS_Store
+*.jks
+*.keystore
+*.xcuserstate
+xcuserdata/
+DerivedData/
+.build/
+
+# Local Flutter workspace remains while switching branches.
+.dart_tool/
+.flutter-plugins-dependencies
+android/
+build/
+ios/
