@@ -1,0 +1,72 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Editor and local tooling state
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+
+# Xcode build outputs
+DerivedData/
+build/
+Build/
+*.xcarchive
+*.xcresult
+*.dSYM
+*.dSYM.zip
+*.ipa
+
+# Swift Package Manager build cache
+.build/
+.swiftpm/
+
+# CocoaPods / Carthage generated output
+Pods/
+Carthage/Build/
+
+# Signing material and local secrets
+*.mobileprovision
+*.provisionprofile
+*.cer
+*.p12
+*.pem
+*.key
+*.jks
+*.keystore
+key.properties
+*.local.xcconfig
+Secrets.xcconfig
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Userscript scratch exports
+*.user.js.bak
+*.user.js.tmp
+
+# Flutter / Dart generated state
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+coverage/
+artifacts/
