@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 data class BrowserUiState(
@@ -26,6 +27,7 @@ data class BrowserUiState(
     val bookmarks: List<Bookmark> = emptyList(),
     val userAgent: String = "",
     val transientMessage: String? = null,
+    val transientMessageRevision: Long = 0L,
     val webViewGeneration: Int = 0,
 )
 
@@ -79,11 +81,19 @@ fun reduceBrowserEvent(state: BrowserUiState, event: BrowserEvent): BrowserUiSta
         bookmarks = event.preferences.bookmarks.toList(),
         userAgent = event.preferences.userAgent,
     )
-    is BrowserEvent.MessageChanged -> state.copy(transientMessage = event.message)
+    is BrowserEvent.MessageChanged -> state.copy(
+        transientMessage = event.message,
+        transientMessageRevision = if (event.message == null) {
+            state.transientMessageRevision
+        } else {
+            state.transientMessageRevision + 1L
+        },
+    )
     BrowserEvent.RendererGone -> state.copy(
         loading = false,
         progress = 0.0,
         transientMessage = "网页渲染进程已退出，请重新加载",
+        transientMessageRevision = state.transientMessageRevision + 1L,
         webViewGeneration = state.webViewGeneration + 1,
     )
 }
@@ -168,7 +178,7 @@ class BrowserViewModel(
         if (url.isEmpty()) return
         val wasBookmarked = state.bookmarks.any { it.url == url }
         viewModelScope.launch {
-            runCatching {
+            try {
                 preferencesRepository.update { preferences ->
                     preferences.copy(
                         bookmarks = reduceBookmarkToggle(
@@ -179,9 +189,10 @@ class BrowserViewModel(
                         ),
                     )
                 }
-            }.onSuccess {
                 dispatch(BrowserEvent.MessageChanged(if (wasBookmarked) "已取消收藏" else "已收藏"))
-            }.onFailure { error ->
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
                 dispatch(BrowserEvent.MessageChanged(error.message ?: "收藏更新失败"))
             }
         }

@@ -1,14 +1,28 @@
 package com.sniffsub.sniff_sub_player.settings
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Text
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertContentDescriptionContains
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.sniffsub.sniff_sub_player.adblock.AdBlockState
 import com.sniffsub.sniff_sub_player.adblock.AdBlockSubscription
 import com.sniffsub.sniff_sub_player.data.AppPreferences
+import com.sniffsub.sniff_sub_player.SafeUiActionExecutor
+import com.sniffsub.sniff_sub_player.UiMessageController
+import com.sniffsub.sniff_sub_player.UiMessageHost
+import java.io.IOException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -100,7 +114,12 @@ class SettingsScreenTest {
         compose.setContent {
             AdBlockSettingsScreen(
                 state = AdBlockState(),
-                actions = noOpAdBlockActions().copy(onAddSubscription = { addedUrl = it }),
+                actions = noOpAdBlockActions().copy(
+                    onAddSubscription = {
+                        addedUrl = it
+                        Result.success(Unit)
+                    },
+                ),
             )
         }
 
@@ -111,6 +130,66 @@ class SettingsScreenTest {
         assertNull(addedUrl)
         compose.onNodeWithTag("subscription_validation_error")
             .assertTextContains("请输入有效的 HTTPS raw 规则链接")
+    }
+
+    @Test
+    fun duplicate_https_subscription_failure_stays_visible_in_current_dialog() {
+        compose.setContent {
+            AdBlockSettingsScreen(
+                state = AdBlockState(),
+                actions = noOpAdBlockActions().copy(
+                    onAddSubscription = {
+                        Result.failure<Unit>(IOException("该订阅已经存在"))
+                    },
+                ),
+            )
+        }
+
+        compose.onNodeWithTag("add_subscription_button").performClick()
+        compose.onNodeWithTag("subscription_url_field")
+            .performTextInput("https://rules.test/filter.txt")
+        compose.onNodeWithTag("confirm_add_subscription").performClick()
+
+        compose.onNodeWithTag("subscription_url_field").assertExists()
+        compose.onNodeWithTag("subscription_validation_error")
+            .assertTextContains("该订阅已经存在")
+    }
+
+    @Test
+    fun accent_swatch_exposes_readable_name_and_selected_semantics() {
+        compose.setContent {
+            SettingsScreen(
+                preferences = AppPreferences(accentArgb = 0xFFE8A7BFL),
+                actions = noOpSettingsActions(),
+            )
+        }
+
+        compose.onNodeWithTag("accent_color_row").performClick()
+        compose.onNodeWithTag("accent_color_FFE8A7BF")
+            .assertContentDescriptionContains("樱花粉")
+            .assertIsSelected()
+    }
+
+    @Test
+    fun throwing_action_failure_is_contained_and_visible_above_current_settings_page() {
+        val controller = UiMessageController()
+        lateinit var executor: SafeUiActionExecutor
+        compose.setContent {
+            val message by controller.message.collectAsState()
+            val scope = rememberCoroutineScope()
+            executor = SafeUiActionExecutor(scope, controller::show)
+            Box(modifier = Modifier.fillMaxSize()) {
+                Text("设置页")
+                UiMessageHost(message = message, onConsumed = controller::consume)
+            }
+        }
+
+        compose.runOnIdle {
+            executor.launch("保存设置失败") {
+                throw IOException("磁盘写入失败")
+            }
+        }
+        compose.onNodeWithText("磁盘写入失败").assertExists()
     }
 
     @Test
@@ -160,7 +239,7 @@ class SettingsScreenTest {
         onSetEnabled = {},
         onSetAutomaticUpdatesEnabled = {},
         onSetSubscriptionEnabled = { _, _ -> },
-        onAddSubscription = {},
+        onAddSubscription = { Result.success(Unit) },
         onRemoveSubscription = {},
         onRefresh = {},
     )

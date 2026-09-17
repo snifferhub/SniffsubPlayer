@@ -44,11 +44,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sniffsub.sniff_sub_player.data.AppPreferences
 
 data class UserAgentOption(val id: String, val name: String, val value: String)
+data class AccentColorOption(val argb: Long, val name: String)
 
 const val IPAD_SAFARI_USER_AGENT =
     "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) " +
@@ -64,20 +67,21 @@ val USER_AGENT_OPTIONS = listOf(
     UserAgentOption("macos_safari", "macOS Safari", MACOS_SAFARI_USER_AGENT),
 )
 
-val ACCENT_COLOR_PALETTE = listOf(
-    0xFFE8A7BFL,
-    0xFFFF2D55L,
-    0xFFFF9500L,
-    0xFFFFCC00L,
-    0xFF34C759L,
-    0xFF00C7BEL,
-    0xFF007AFFL,
-    0xFF5856D6L,
-    0xFFAF52DEL,
-    0xFFFFFFFFL,
-    0xFF8E8E93L,
-    0xFF1C1C1EL,
+val ACCENT_COLOR_OPTIONS = listOf(
+    AccentColorOption(0xFFE8A7BFL, "樱花粉"),
+    AccentColorOption(0xFFFF2D55L, "活力红"),
+    AccentColorOption(0xFFFF9500L, "橙色"),
+    AccentColorOption(0xFFFFCC00L, "黄色"),
+    AccentColorOption(0xFF34C759L, "绿色"),
+    AccentColorOption(0xFF00C7BEL, "青色"),
+    AccentColorOption(0xFF007AFFL, "蓝色"),
+    AccentColorOption(0xFF5856D6L, "靛蓝"),
+    AccentColorOption(0xFFAF52DEL, "紫色"),
+    AccentColorOption(0xFFFFFFFFL, "白色"),
+    AccentColorOption(0xFF8E8E93L, "灰色"),
+    AccentColorOption(0xFF1C1C1EL, "深黑"),
 )
+val ACCENT_COLOR_PALETTE = ACCENT_COLOR_OPTIONS.map(AccentColorOption::argb)
 
 data class SettingsActions(
     val onBack: () -> Unit,
@@ -213,21 +217,27 @@ fun SettingsScreen(
             title = { Text("进度条颜色") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ACCENT_COLOR_PALETTE.chunked(4).forEach { colors ->
+                    ACCENT_COLOR_OPTIONS.chunked(4).forEach { colors ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                         ) {
-                            colors.forEach { color ->
-                                val hex = color.toString(16).uppercase().padStart(8, '0')
+                            colors.forEach { option ->
+                                val isSelected = option.argb == preferences.accentArgb
+                                val hex = option.argb.toString(16).uppercase().padStart(8, '0')
                                 Box(
                                     modifier = Modifier
                                         .size(44.dp)
-                                        .background(Color(color), CircleShape)
-                                        .clickable {
-                                            actions.onAccentSelected(color)
-                                            showAccentDialog = false
-                                        }
+                                        .background(Color(option.argb), CircleShape)
+                                        .selectable(
+                                            selected = isSelected,
+                                            role = Role.RadioButton,
+                                            onClick = {
+                                                actions.onAccentSelected(option.argb)
+                                                showAccentDialog = false
+                                            },
+                                        )
+                                        .semantics { contentDescription = option.name }
                                         .testTag("accent_color_$hex"),
                                 )
                             }

@@ -44,15 +44,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 data class BrowserActions(
     val onToggleBookmark: () -> Unit,
@@ -63,6 +67,7 @@ data class BrowserActions(
     val onEnableSniffer: () -> Unit,
     val onClearCandidates: () -> Unit,
     val onOpenCandidate: (MediaCandidate) -> Unit,
+    val onConsumeTransientMessage: () -> Unit,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,14 +81,29 @@ fun BrowserScreen(
 ) {
     var addressText by remember { mutableStateOf(state.address) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val currentUrl = state.currentPageUrl.ifBlank { state.address }.trim()
     val isBookmarked = state.bookmarks.any { it.url == currentUrl }
 
     LaunchedEffect(state.address) {
         if (state.address != addressText) addressText = state.address
     }
-    LaunchedEffect(state.transientMessage) {
-        state.transientMessage?.let { snackbarHostState.showSnackbar(it) }
+    LaunchedEffect(state.transientMessageRevision) {
+        state.transientMessage?.let { message ->
+            actions.onConsumeTransientMessage()
+            snackbarScope.launch {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(message)
+            }
+        }
+    }
+
+    fun submitAddress() {
+        actions.onSubmitAddress(addressText)
+        focusManager.clearFocus()
+        keyboardController?.hide()
     }
 
     Scaffold(
@@ -157,10 +177,10 @@ fun BrowserScreen(
                     placeholder = { Text("输入网址或搜索") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(
-                        onGo = { actions.onSubmitAddress(addressText) },
+                        onGo = { submitAddress() },
                     ),
                 )
-                TextButton(onClick = { actions.onSubmitAddress(addressText) }) {
+                TextButton(onClick = ::submitAddress) {
                     Text("前往")
                 }
             }

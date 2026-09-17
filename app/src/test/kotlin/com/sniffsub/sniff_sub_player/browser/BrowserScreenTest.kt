@@ -4,10 +4,15 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -71,6 +76,46 @@ class BrowserScreenTest {
         assertEquals(candidates.first(), opened)
     }
 
+    @Test
+    fun address_ime_submission_clears_focus_after_dispatch() {
+        var submitted: String? = null
+        compose.setContent {
+            BrowserScreen(
+                state = sampleState(),
+                actions = noOpActions().copy(onSubmitAddress = { submitted = it }),
+            )
+        }
+
+        val addressField = compose.onNodeWithTag("address_field")
+        addressField.performClick()
+        addressField.performTextClearance()
+        addressField.performTextInput("example.com")
+        addressField.performImeAction()
+
+        assertEquals("example.com", submitted)
+        addressField.assertIsNotFocused()
+    }
+
+    @Test
+    fun transient_message_is_explicitly_consumed() {
+        val consumed = AtomicInteger()
+        compose.setContent {
+            BrowserScreen(
+                state = sampleState().copy(
+                    transientMessage = "更新失败",
+                    transientMessageRevision = 1L,
+                ),
+                actions = noOpActions().copy(
+                    onConsumeTransientMessage = {
+                        consumed.incrementAndGet()
+                    },
+                ),
+            )
+        }
+
+        compose.waitUntil { consumed.get() == 1 }
+    }
+
     private fun sampleState() = BrowserUiState(
         address = "https://example.test",
         title = "示例页面",
@@ -98,5 +143,6 @@ class BrowserScreenTest {
         onEnableSniffer = {},
         onClearCandidates = {},
         onOpenCandidate = {},
+        onConsumeTransientMessage = {},
     )
 }

@@ -6,13 +6,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.compose.NavHost
@@ -31,7 +35,6 @@ import com.sniffsub.sniff_sub_player.settings.BookmarksScreen
 import com.sniffsub.sniff_sub_player.settings.SettingsActions
 import com.sniffsub.sniff_sub_player.settings.SettingsScreen
 import com.sniffsub.sniff_sub_player.ui.theme.SniffSubPlayerTheme
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val appContainer: AppContainer
@@ -67,9 +70,16 @@ private fun SniffSubPlayerApp(
     )
     val adBlockState by container.adBlockRepository.state.collectAsState()
     val webViewController = rememberBrowserWebViewController()
+    val messageController = remember { UiMessageController() }
+    val globalMessage by messageController.message.collectAsState()
+    val actionExecutor = remember(coroutineScope, messageController) {
+        SafeUiActionExecutor(coroutineScope, messageController::show)
+    }
 
-    LaunchedEffect(container.adBlockRepository) {
-        container.adBlockRepository.restore()
+    LaunchedEffect(container.adBlockRepository, actionExecutor) {
+        actionExecutor.execute("广告拦截设置加载失败") {
+            container.adBlockRepository.restore()
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -89,6 +99,7 @@ private fun SniffSubPlayerApp(
                 onOpenCandidate = {
                     browserViewModel.setTransientMessage("播放器将在后续步骤中接入")
                 },
+                onConsumeTransientMessage = browserViewModel::clearTransientMessage,
             ),
             webViewContent = {
                 BrowserWebView(
@@ -114,17 +125,17 @@ private fun SniffSubPlayerApp(
                         actions = SettingsActions(
                             onBack = navController::popBackStack,
                             onUserAgentSelected = { value ->
-                                coroutineScope.launch {
+                                actionExecutor.launch("User Agent 更新失败") {
                                     container.preferencesRepository.update { it.copy(userAgent = value) }
                                 }
                             },
                             onAccentSelected = { value ->
-                                coroutineScope.launch {
+                                actionExecutor.launch("进度条颜色更新失败") {
                                     container.preferencesRepository.update { it.copy(accentArgb = value) }
                                 }
                             },
                             onResetAccent = {
-                                coroutineScope.launch {
+                                actionExecutor.launch("进度条颜色重置失败") {
                                     container.preferencesRepository.update {
                                         it.copy(accentArgb = DEFAULT_ACCENT_ARGB)
                                     }
@@ -148,7 +159,7 @@ private fun SniffSubPlayerApp(
                                 navController.popBackStack(BROWSER_ROUTE, inclusive = false)
                             },
                             onDeleteBookmark = { bookmark ->
-                                coroutineScope.launch {
+                                actionExecutor.launch("删除收藏失败") {
                                     container.preferencesRepository.update { current ->
                                         current.copy(
                                             bookmarks = current.bookmarks.filterNot { it.id == bookmark.id },
@@ -167,7 +178,7 @@ private fun SniffSubPlayerApp(
                         actions = AdBlockSettingsActions(
                             onBack = navController::popBackStack,
                             onSetEnabled = { enabled ->
-                                coroutineScope.launch {
+                                actionExecutor.launch("广告拦截开关更新失败") {
                                     container.adBlockRepository.setEnabled(enabled)
                                     val current = container.adBlockRepository.state.value
                                     if (
@@ -175,40 +186,51 @@ private fun SniffSubPlayerApp(
                                         current.convertedRulesCount == 0 &&
                                         current.subscriptions.any { it.enabled }
                                     ) {
-                                        container.adBlockRepository.refresh()
+                                        container.adBlockRepository.refresh().getOrThrow()
                                     }
                                 }
                             },
                             onSetAutomaticUpdatesEnabled = { enabled ->
-                                coroutineScope.launch {
+                                actionExecutor.launch("自动更新开关更新失败") {
                                     container.adBlockRepository.setAutomaticUpdatesEnabled(enabled)
                                 }
                             },
                             onSetSubscriptionEnabled = { id, enabled ->
-                                coroutineScope.launch {
+                                actionExecutor.launch("订阅开关更新失败") {
                                     container.adBlockRepository.setSubscriptionEnabled(id, enabled)
                                 }
                             },
                             onAddSubscription = { url ->
-                                coroutineScope.launch {
-                                    container.adBlockRepository.addSubscription(url).onFailure { error ->
-                                        browserViewModel.setTransientMessage(error.message)
-                                    }
+                                actionExecutor.execute(
+                                    fallbackMessage = "添加订阅失败",
+                                    publishError = false,
+                                ) {
+                                    container.adBlockRepository.addSubscription(url).getOrThrow()
                                 }
                             },
                             onRemoveSubscription = { id ->
-                                coroutineScope.launch {
+                                actionExecutor.launch("删除订阅失败") {
                                     container.adBlockRepository.removeSubscription(id)
                                 }
                             },
                             onRefresh = {
-                                coroutineScope.launch { container.adBlockRepository.refresh() }
+                                actionExecutor.launch("广告规则更新失败") {
+                                    container.adBlockRepository.refresh().getOrThrow()
+                                }
                             },
                         ),
                     )
                 }
             }
         }
+
+        UiMessageHost(
+            message = globalMessage,
+            onConsumed = messageController::consume,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp),
+        )
     }
 }
 

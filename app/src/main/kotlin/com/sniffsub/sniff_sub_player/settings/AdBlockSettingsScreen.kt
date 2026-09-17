@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,13 +40,14 @@ import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 data class AdBlockSettingsActions(
     val onBack: () -> Unit,
     val onSetEnabled: (Boolean) -> Unit,
     val onSetAutomaticUpdatesEnabled: (Boolean) -> Unit,
     val onSetSubscriptionEnabled: (String, Boolean) -> Unit,
-    val onAddSubscription: (String) -> Unit,
+    val onAddSubscription: suspend (String) -> Result<Unit>,
     val onRemoveSubscription: (String) -> Unit,
     val onRefresh: () -> Unit,
 )
@@ -71,6 +73,7 @@ fun AdBlockSettingsScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var subscriptionUrl by remember { mutableStateOf("") }
     var validationMessage by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -210,8 +213,13 @@ fun AdBlockSettingsScreen(
                     onClick = {
                         val error = subscriptionValidationMessage(subscriptionUrl)
                         if (error == null) {
-                            actions.onAddSubscription(subscriptionUrl.trim())
-                            showAddDialog = false
+                            coroutineScope.launch {
+                                actions.onAddSubscription(subscriptionUrl.trim())
+                                    .onSuccess { showAddDialog = false }
+                                    .onFailure { failure ->
+                                        validationMessage = failure.message ?: "添加订阅失败"
+                                    }
+                            }
                         } else {
                             validationMessage = error
                         }

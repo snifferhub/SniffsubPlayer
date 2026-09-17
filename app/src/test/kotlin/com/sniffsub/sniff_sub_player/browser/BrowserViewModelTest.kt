@@ -5,6 +5,7 @@ import com.sniffsub.sniff_sub_player.data.AppPreferencesRepository
 import com.sniffsub.sniff_sub_player.data.Bookmark
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -172,6 +173,34 @@ class BrowserViewModelTest {
         assertEquals("网页渲染进程已退出，请重新加载", recovered.transientMessage)
     }
 
+    @Test
+    fun repeated_transient_message_text_receives_a_new_event_revision() {
+        val first = reduceBrowserEvent(
+            BrowserUiState(),
+            BrowserEvent.MessageChanged("更新失败"),
+        )
+        val second = reduceBrowserEvent(
+            first,
+            BrowserEvent.MessageChanged("更新失败"),
+        )
+
+        assertEquals("更新失败", second.transientMessage)
+        assertEquals(1L, first.transientMessageRevision)
+        assertEquals(2L, second.transientMessageRevision)
+    }
+
+    @Test
+    fun cancelled_bookmark_write_is_not_converted_to_an_error_message() = runTest {
+        val preferences = FailingPreferencesRepository(CancellationException("cancelled"))
+        val viewModel = BrowserViewModel(preferences)
+        viewModel.updatePage("https://page.test", pageTitle = "Page")
+
+        viewModel.toggleBookmark()
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.transientMessage)
+    }
+
     private fun candidate(url: String) = MediaCandidate(
         url = url,
         kind = MediaKind.MP4,
@@ -195,5 +224,15 @@ private class FakePreferencesRepository(
 
     override suspend fun update(transform: (AppPreferences) -> AppPreferences) {
         mutableValues.value = transform(mutableValues.value)
+    }
+}
+
+private class FailingPreferencesRepository(
+    private val failure: Throwable,
+) : AppPreferencesRepository {
+    override val values: Flow<AppPreferences> = MutableStateFlow(AppPreferences())
+
+    override suspend fun update(transform: (AppPreferences) -> AppPreferences) {
+        throw failure
     }
 }
