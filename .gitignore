@@ -8,6 +8,7 @@ Icon?
 # Editor and local tooling state
 .idea/
 .vscode/
+.worktrees/
 *.iml
 *.swp
 *.swo
