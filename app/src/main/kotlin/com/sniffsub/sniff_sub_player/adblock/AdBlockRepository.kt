@@ -7,135 +7,145 @@ import com.sniffsub.sniff_sub_player.util.HttpFetcher
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class AdBlockRepository(
     private val preferencesRepository: AppPreferencesRepository,
     private val httpFetcher: HttpFetcher,
     private val compiler: AdRuleCompiler = AdRuleCompiler(),
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
+    private val ruleDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     private val mutableState = MutableStateFlow(AdBlockState())
     private val compiledRules = AtomicReference(EMPTY_RULES)
-    private val refreshMutex = Mutex()
+    private val operationMutex = Mutex()
 
     val state: StateFlow<AdBlockState> = mutableState.asStateFlow()
 
     fun blocks(url: String): Boolean = mutableState.value.isEnabled && compiledRules.get().blocks(url)
 
     suspend fun restore() {
-        val preferences = preferencesRepository.values.first()
-        val subscriptions = mergeBuiltInSubscriptions(preferences.subscriptions)
-        val restoredRules = restoreRules(preferences)
+        val shouldRefresh = operationMutex.withLock {
+            val preferences = preferencesRepository.values.first()
+            val subscriptions = mergeBuiltInSubscriptions(preferences.subscriptions)
+            val restoredRules = withContext(ruleDispatcher) { restoreRules(preferences) }
+            val storedSubscriptions = subscriptions.map(AdBlockSubscription::toStored)
+            val subscriptionsChanged = storedSubscriptions != preferences.subscriptions
+            val configurationNeedsUpdate =
+                preferences.adBlockConfigurationNeedsUpdate || subscriptionsChanged
 
-        compiledRules.set(restoredRules)
-        mutableState.value = AdBlockState(
-            isEnabled = preferences.adBlockEnabled,
-            automaticUpdatesEnabled = preferences.automaticUpdatesEnabled,
-            subscriptions = subscriptions,
-            sourceRulesCount = restoredRules.sourceCount,
-            convertedRulesCount = restoredRules.convertedCount,
-            discardedRulesCount = restoredRules.discardedCount,
-            lastUpdatedAtEpochMs = preferences.lastUpdatedAtEpochMs,
-        )
+            compiledRules.set(restoredRules)
+            mutableState.value = AdBlockState(
+                isEnabled = preferences.adBlockEnabled,
+                automaticUpdatesEnabled = preferences.automaticUpdatesEnabled,
+                subscriptions = subscriptions,
+                configurationNeedsUpdate = configurationNeedsUpdate,
+                sourceRulesCount = restoredRules.sourceCount,
+                convertedRulesCount = restoredRules.convertedCount,
+                discardedRulesCount = restoredRules.discardedCount,
+                lastUpdatedAtEpochMs = preferences.lastUpdatedAtEpochMs,
+            )
 
-        val storedSubscriptions = subscriptions.map(AdBlockSubscription::toStored)
-        if (storedSubscriptions != preferences.subscriptions) {
-            preferencesRepository.update { current ->
-                current.copy(subscriptions = storedSubscriptions)
+            if (subscriptionsChanged) {
+                preferencesRepository.update { current ->
+                    current.copy(
+                        subscriptions = storedSubscriptions,
+                        adBlockConfigurationNeedsUpdate = true,
+                    )
+                }
             }
-        }
 
-        if (
-            preferences.adBlockEnabled &&
-            preferences.automaticUpdatesEnabled &&
-            subscriptions.any(AdBlockSubscription::enabled)
-        ) {
-            refresh()
+            preferences.adBlockEnabled && preferences.automaticUpdatesEnabled
         }
+        if (shouldRefresh) refresh()
     }
 
     suspend fun addSubscription(rawUrl: String): Result<Unit> = runCatching {
-        val normalizedUrl = validateCustomSubscriptionUrl(rawUrl)
-        val current = mutableState.value
-        if (current.subscriptions.any { it.url.equals(normalizedUrl, ignoreCase = true) }) {
-            throw IllegalArgumentException("该订阅已经存在")
-        }
+        operationMutex.withLock {
+            val normalizedUrl = validateCustomSubscriptionUrl(rawUrl)
+            val current = mutableState.value
+            if (current.subscriptions.any { it.url.equals(normalizedUrl, ignoreCase = true) }) {
+                throw IllegalArgumentException("该订阅已经存在")
+            }
 
-        val uri = URI(normalizedUrl)
-        val updated = current.subscriptions + AdBlockSubscription(
-            id = UUID.randomUUID().toString(),
-            name = uri.host.removePrefix("raw."),
-            url = normalizedUrl,
-        )
-        persistSubscriptions(updated)
-        mutableState.value = current.copy(
-            subscriptions = updated,
-            configurationNeedsUpdate = true,
-            errorMessage = null,
-        )
+            val uri = URI(normalizedUrl)
+            val updated = current.subscriptions + AdBlockSubscription(
+                id = UUID.randomUUID().toString(),
+                name = uri.host.removePrefix("raw."),
+                url = normalizedUrl,
+            )
+            persistSubscriptions(updated, configurationNeedsUpdate = true)
+            mutableState.value = current.copy(
+                subscriptions = updated,
+                configurationNeedsUpdate = true,
+                errorMessage = null,
+            )
+        }
     }
 
-    suspend fun removeSubscription(id: String) {
+    suspend fun removeSubscription(id: String) = operationMutex.withLock {
         val current = mutableState.value
-        val target = current.subscriptions.firstOrNull { it.id == id } ?: return
-        if (target.builtIn) return
+        val target = current.subscriptions.firstOrNull { it.id == id } ?: return@withLock
+        if (target.builtIn) return@withLock
 
         val updated = current.subscriptions.filterNot { it.id == id }
-        persistSubscriptions(updated)
+        persistSubscriptions(updated, configurationNeedsUpdate = true)
         mutableState.value = current.copy(
             subscriptions = updated,
             configurationNeedsUpdate = true,
         )
     }
 
-    suspend fun setSubscriptionEnabled(id: String, enabled: Boolean) {
+    suspend fun setSubscriptionEnabled(id: String, enabled: Boolean) = operationMutex.withLock {
         val current = mutableState.value
-        if (current.subscriptions.none { it.id == id }) return
+        if (current.subscriptions.none { it.id == id }) return@withLock
 
         val updated = current.subscriptions.map { subscription ->
             if (subscription.id == id) subscription.copy(enabled = enabled) else subscription
         }
-        persistSubscriptions(updated)
+        persistSubscriptions(updated, configurationNeedsUpdate = true)
         mutableState.value = current.copy(
             subscriptions = updated,
             configurationNeedsUpdate = true,
         )
     }
 
-    suspend fun setEnabled(enabled: Boolean) {
+    suspend fun setEnabled(enabled: Boolean) = operationMutex.withLock {
         preferencesRepository.update { current -> current.copy(adBlockEnabled = enabled) }
         mutableState.value = mutableState.value.copy(isEnabled = enabled)
     }
 
-    suspend fun setAutomaticUpdatesEnabled(enabled: Boolean) {
+    suspend fun setAutomaticUpdatesEnabled(enabled: Boolean) = operationMutex.withLock {
         preferencesRepository.update { current -> current.copy(automaticUpdatesEnabled = enabled) }
         mutableState.value = mutableState.value.copy(automaticUpdatesEnabled = enabled)
     }
 
-    suspend fun refresh(): Result<Unit> = refreshMutex.withLock {
+    suspend fun refresh(): Result<Unit> = operationMutex.withLock {
         val subscriptions = mutableState.value.subscriptions.filter(AdBlockSubscription::enabled)
-        if (subscriptions.isEmpty()) return@withLock Result.success(Unit)
-
         mutableState.value = mutableState.value.copy(isUpdating = true, errorMessage = null)
         val outcome = runCatching {
-            val lines = buildList {
-                subscriptions.forEach { subscription ->
-                    val bytes = httpFetcher.get(
-                        url = subscription.url,
-                        headers = mapOf(USER_AGENT_HEADER to USER_AGENT_VALUE),
-                        timeoutMillis = DOWNLOAD_TIMEOUT_MILLIS,
-                        maximumBytes = MAXIMUM_DOWNLOAD_BYTES,
-                    )
-                    addAll(bytes.toString(Charsets.UTF_8).lineSequence())
-                }
+            val sources = subscriptions.map { subscription ->
+                httpFetcher.get(
+                    url = subscription.url,
+                    headers = mapOf(USER_AGENT_HEADER to USER_AGENT_VALUE),
+                    timeoutMillis = DOWNLOAD_TIMEOUT_MILLIS,
+                    maximumBytes = MAXIMUM_DOWNLOAD_BYTES,
+                )
             }
-            val candidate = compiler.compile(lines.asSequence())
+            val candidate = withContext(ruleDispatcher) {
+                val lines = sources.asSequence().flatMap { bytes ->
+                    bytes.toString(Charsets.UTF_8).lineSequence()
+                }
+                compiler.compile(lines)
+            }
             val updatedAt = nowEpochMs()
 
             preferencesRepository.update { current ->
@@ -145,6 +155,7 @@ class AdBlockRepository(
                     convertedRulesCount = candidate.convertedCount,
                     discardedRulesCount = candidate.discardedCount,
                     lastUpdatedAtEpochMs = updatedAt,
+                    adBlockConfigurationNeedsUpdate = false,
                 )
             }
 
@@ -169,9 +180,15 @@ class AdBlockRepository(
         outcome
     }
 
-    private suspend fun persistSubscriptions(subscriptions: List<AdBlockSubscription>) {
+    private suspend fun persistSubscriptions(
+        subscriptions: List<AdBlockSubscription>,
+        configurationNeedsUpdate: Boolean,
+    ) {
         preferencesRepository.update { current ->
-            current.copy(subscriptions = subscriptions.map(AdBlockSubscription::toStored))
+            current.copy(
+                subscriptions = subscriptions.map(AdBlockSubscription::toStored),
+                adBlockConfigurationNeedsUpdate = configurationNeedsUpdate,
+            )
         }
     }
 

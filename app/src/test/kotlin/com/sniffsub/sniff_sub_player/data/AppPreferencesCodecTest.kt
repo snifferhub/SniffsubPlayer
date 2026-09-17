@@ -24,6 +24,7 @@ class AppPreferencesCodecTest {
             ),
             adBlockEnabled = true,
             automaticUpdatesEnabled = false,
+            adBlockConfigurationNeedsUpdate = true,
             subscriptions = listOf(
                 StoredSubscription(
                     id = "subscription-1",

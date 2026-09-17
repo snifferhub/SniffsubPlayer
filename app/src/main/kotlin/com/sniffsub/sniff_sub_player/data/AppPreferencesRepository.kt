@@ -35,6 +35,7 @@ data class AppPreferences(
     val bookmarks: List<Bookmark> = emptyList(),
     val adBlockEnabled: Boolean = false,
     val automaticUpdatesEnabled: Boolean = true,
+    val adBlockConfigurationNeedsUpdate: Boolean = false,
     val subscriptions: List<StoredSubscription> = emptyList(),
     val compiledFilters: List<String> = emptyList(),
     val sourceRulesCount: Int = 0,

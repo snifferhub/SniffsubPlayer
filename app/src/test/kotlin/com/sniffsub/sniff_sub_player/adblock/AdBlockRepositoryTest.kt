@@ -5,8 +5,15 @@ import com.sniffsub.sniff_sub_player.data.AppPreferencesRepository
 import com.sniffsub.sniff_sub_player.data.StoredSubscription
 import com.sniffsub.sniff_sub_player.util.HttpFetcher
 import java.io.IOException
+import java.util.ArrayDeque
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -162,6 +169,145 @@ class AdBlockRepositoryTest {
         assertTrue(repository.blocks("https://ads.example/banner"))
     }
 
+    @Test
+    fun concurrent_subscription_additions_do_not_lose_each_other() = runTest {
+        val preferences = FakePreferencesRepository(
+            AppPreferences(
+                automaticUpdatesEnabled = false,
+                subscriptions = subscriptionsWithOnly().map { it.copy(enabled = false) },
+            ),
+        )
+        val repository = AdBlockRepository(preferences, FakeHttpFetcher())
+        repository.restore()
+        preferences.blockUpdates()
+
+        val first = async { repository.addSubscription("https://one.example/list.txt") }
+        preferences.awaitUpdateStarted()
+        val second = async { repository.addSubscription("https://two.example/list.txt") }
+        testScheduler.runCurrent()
+        assertFalse(second.isCompleted)
+        preferences.releaseUpdates()
+
+        assertTrue(first.await().isSuccess)
+        assertTrue(second.await().isSuccess)
+        assertEquals(
+            setOf("https://one.example/list.txt", "https://two.example/list.txt"),
+            repository.state.value.subscriptions.filterNot { it.builtIn }.map { it.url }.toSet(),
+        )
+        assertEquals(
+            setOf("https://one.example/list.txt", "https://two.example/list.txt"),
+            preferences.current.subscriptions.filterNot { it.builtIn }.map { it.url }.toSet(),
+        )
+    }
+
+    @Test
+    fun subscription_change_waits_for_refresh_then_marks_configuration_dirty() = runTest {
+        val preferences = FakePreferencesRepository(
+            AppPreferences(
+                adBlockEnabled = true,
+                automaticUpdatesEnabled = false,
+                subscriptions = subscriptionsWithOnly(subscription("one")),
+            ),
+        )
+        val fetcher = SuspendingHttpFetcher("new.example".encodeToByteArray())
+        val repository = AdBlockRepository(preferences, fetcher)
+        repository.restore()
+
+        val refresh = async { repository.refresh() }
+        fetcher.awaitStarted()
+        val disable = launch { repository.setSubscriptionEnabled("one", false) }
+        testScheduler.runCurrent()
+        assertFalse(disable.isCompleted)
+
+        fetcher.release()
+        assertTrue(refresh.await().isSuccess)
+        disable.join()
+
+        assertFalse(repository.state.value.subscriptions.single { it.id == "one" }.enabled)
+        assertTrue(repository.state.value.configurationNeedsUpdate)
+        assertTrue(preferences.current.adBlockConfigurationNeedsUpdate)
+    }
+
+    @Test
+    fun restore_preserves_persisted_configuration_mismatch() = runTest {
+        val preferences = FakePreferencesRepository(
+            AppPreferences(
+                automaticUpdatesEnabled = false,
+                subscriptions = subscriptionsWithOnly(subscription("one")),
+            ),
+        )
+        val firstRepository = AdBlockRepository(preferences, FakeHttpFetcher())
+        firstRepository.restore()
+        firstRepository.setSubscriptionEnabled("one", false)
+
+        val restoredRepository = AdBlockRepository(preferences, FakeHttpFetcher())
+        restoredRepository.restore()
+
+        assertTrue(restoredRepository.state.value.configurationNeedsUpdate)
+    }
+
+    @Test
+    fun refresh_with_no_enabled_sources_clears_the_last_valid_snapshot() = runTest {
+        val preferences = FakePreferencesRepository(
+            AppPreferences(
+                adBlockEnabled = true,
+                automaticUpdatesEnabled = false,
+                subscriptions = subscriptionsWithOnly().map { it.copy(enabled = false) },
+                compiledFilters = listOf("old\\.example"),
+                sourceRulesCount = 1,
+                convertedRulesCount = 1,
+                adBlockConfigurationNeedsUpdate = true,
+            ),
+        )
+        val repository = AdBlockRepository(preferences, FakeHttpFetcher())
+        repository.restore()
+        assertTrue(repository.blocks("https://old.example/banner"))
+
+        assertTrue(repository.refresh().isSuccess)
+
+        assertFalse(repository.blocks("https://old.example/banner"))
+        assertEquals(emptyList<String>(), preferences.current.compiledFilters)
+        assertEquals(0, preferences.current.sourceRulesCount)
+        assertEquals(0, preferences.current.convertedRulesCount)
+        assertFalse(preferences.current.adBlockConfigurationNeedsUpdate)
+        assertFalse(repository.state.value.configurationNeedsUpdate)
+    }
+
+    @Test
+    fun rule_snapshot_construction_uses_the_injected_dispatcher() = runTest {
+        val ruleDispatcher = QueueingDispatcher()
+        val preferences = FakePreferencesRepository(
+            AppPreferences(
+                adBlockEnabled = true,
+                automaticUpdatesEnabled = false,
+                subscriptions = subscriptionsWithOnly(subscription("one")),
+                compiledFilters = listOf("old\\.example"),
+                sourceRulesCount = 1,
+                convertedRulesCount = 1,
+            ),
+        )
+        val repository = AdBlockRepository(
+            preferencesRepository = preferences,
+            httpFetcher = FakeHttpFetcher(responses = listOf("new.example".encodeToByteArray())),
+            ruleDispatcher = ruleDispatcher,
+        )
+
+        val restore = launch { repository.restore() }
+        testScheduler.runCurrent()
+        assertFalse(restore.isCompleted)
+        ruleDispatcher.runAll()
+        testScheduler.advanceUntilIdle()
+        assertTrue(restore.isCompleted)
+
+        val refresh = launch { repository.refresh() }
+        testScheduler.runCurrent()
+        assertFalse(refresh.isCompleted)
+        ruleDispatcher.runAll()
+        testScheduler.advanceUntilIdle()
+        assertTrue(refresh.isCompleted)
+        assertTrue(repository.blocks("https://new.example/banner"))
+    }
+
     private fun repositoryWith(
         saved: CompiledRuleSet,
         fetchFailure: IOException? = null,
@@ -194,7 +340,7 @@ class AdBlockRepositoryTest {
         builtIn = false,
     )
 
-    private fun subscriptionsWithOnly(custom: StoredSubscription): List<StoredSubscription> =
+    private fun subscriptionsWithOnly(custom: StoredSubscription? = null): List<StoredSubscription> =
         AdBlockRepository.builtInSubscriptions.map { builtIn ->
             StoredSubscription(
                 id = builtIn.id,
@@ -203,20 +349,41 @@ class AdBlockRepositoryTest {
                 enabled = false,
                 builtIn = true,
             )
-        } + custom
+        } + listOfNotNull(custom)
 }
 
 private class FakePreferencesRepository(initial: AppPreferences) : AppPreferencesRepository {
     private val valuesFlow = MutableStateFlow(initial)
+    private val persistenceMutex = Mutex()
+    private var updateGate: CompletableDeferred<Unit>? = null
+    private var updateStarted = CompletableDeferred<Unit>()
 
     override val values: Flow<AppPreferences> = valuesFlow
     val current: AppPreferences get() = valuesFlow.value
     var updateCount: Int = 0
         private set
 
+    fun blockUpdates() {
+        updateGate = CompletableDeferred()
+        updateStarted = CompletableDeferred()
+    }
+
+    suspend fun awaitUpdateStarted() {
+        updateStarted.await()
+    }
+
+    fun releaseUpdates() {
+        updateGate?.complete(Unit)
+        updateGate = null
+    }
+
     override suspend fun update(transform: (AppPreferences) -> AppPreferences) {
-        updateCount += 1
-        valuesFlow.value = transform(valuesFlow.value)
+        updateStarted.complete(Unit)
+        updateGate?.await()
+        persistenceMutex.withLock {
+            updateCount += 1
+            valuesFlow.value = transform(valuesFlow.value)
+        }
     }
 }
 
@@ -242,5 +409,46 @@ private class FakeHttpFetcher(
         requests += Request(url, headers, timeoutMillis, maximumBytes)
         if (failure != null && requests.size > responses.size) throw failure
         return responses.getOrElse(requests.lastIndex) { "ads.example".encodeToByteArray() }
+    }
+}
+
+private class SuspendingHttpFetcher(
+    private val response: ByteArray,
+) : HttpFetcher {
+    private val started = CompletableDeferred<Unit>()
+    private val gate = CompletableDeferred<Unit>()
+
+    suspend fun awaitStarted() {
+        started.await()
+    }
+
+    fun release() {
+        gate.complete(Unit)
+    }
+
+    override suspend fun get(
+        url: String,
+        headers: Map<String, String>,
+        timeoutMillis: Long,
+        maximumBytes: Int,
+    ): ByteArray {
+        started.complete(Unit)
+        gate.await()
+        return response
+    }
+}
+
+private class QueueingDispatcher : CoroutineDispatcher() {
+    private val tasks = ArrayDeque<Runnable>()
+
+    override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) {
+        tasks.addLast(block)
+    }
+
+    fun runAll() {
+        while (true) {
+            val task = tasks.pollFirst() ?: return
+            task.run()
+        }
     }
 }

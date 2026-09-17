@@ -33,8 +33,31 @@ class AdRuleCompilerTest {
         val rules = AdRuleCompiler().compile(sequenceOf("||ads.example^"))
 
         assertTrue(rules.blocks("https://sub.ads.example/banner"))
+        assertTrue(rules.blocks("https://ads.example?campaign=1"))
+        assertTrue(rules.blocks("https://ads.example#sponsor"))
+        assertTrue(rules.blocks("https://ads.example:8443/banner"))
         assertFalse(rules.blocks("https://badads.example/banner"))
         assertFalse(rules.blocks("https://good.example/?next=ads.example"))
+        assertFalse(rules.blocks("https://good.example?next=sub.ads.example/banner"))
+        assertFalse(rules.blocks("https://good.example#https://ads.example/banner"))
+        assertFalse(rules.blocks("https://ads.example.evil/banner"))
+        assertFalse(rules.blocks("https://ads.example:invalid/banner"))
+    }
+
+    @Test
+    fun complex_domain_rules_are_discarded_instead_of_broadened() {
+        val rules = AdRuleCompiler().compile(
+            sequenceOf(
+                "||example.com^/ads",
+                "||example.com/banner*",
+                "||valid.example^",
+            ),
+        )
+
+        assertEquals(1, rules.convertedCount)
+        assertEquals(2, rules.discardedCount)
+        assertTrue(rules.blocks("https://valid.example/banner"))
+        assertFalse(rules.blocks("https://example.com/home"))
     }
 
     @Test

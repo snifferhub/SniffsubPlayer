@@ -53,12 +53,10 @@ class AdRuleCompiler(
         }
 
         if (rule.startsWith("||")) {
-            val domain = rule.substring(2)
-                .substringBefore('^')
-                .filter { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' }
-            if (domain.isBlank()) return null
+            val domain = DOMAIN_RULE.matchEntire(rule)?.groupValues?.get(1) ?: return null
 
-            return "^https?://([^/]+\\.)?${escapeLiteral(domain)}([/:]|$)"
+            return "(?i)^https?://(?:[a-z0-9_-]+\\.)*${escapeLiteral(domain)}" +
+                "(?::[0-9]+)?(?:[/?#]|\$)"
         }
 
         val normalized = rule.removePrefix("|")
@@ -83,5 +81,6 @@ class AdRuleCompiler(
     private companion object {
         const val MAXIMUM_RULE_LENGTH = 500
         const val REGEX_SPECIAL_CHARACTERS = ".\\+?()[]{}|\$"
+        val DOMAIN_RULE = Regex("""^\|\|([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)(?:\^)?$""")
     }
 }
