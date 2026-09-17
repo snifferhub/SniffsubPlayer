@@ -20,28 +20,80 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.sniffsub.sniff_sub_player.adblock.AdBlockRepository
 import java.io.ByteArrayInputStream
 import java.net.URI
+import java.util.Collections
+import java.util.WeakHashMap
 
 class BrowserWebViewController internal constructor() {
-    private var webView: WebView? = null
+    private val webViewSlot = BrowserWebViewReleaseCoordinator<WebView>()
 
     fun loadUrl(url: String) {
-        webView?.loadUrl(url)
+        webViewSlot.withAttached { it.loadUrl(url) }
     }
 
     fun goBack() {
-        webView?.takeIf(WebView::canGoBack)?.goBack()
+        webViewSlot.withAttached { webView -> webView.takeIf(WebView::canGoBack)?.goBack() }
     }
 
     fun goForward() {
-        webView?.takeIf(WebView::canGoForward)?.goForward()
+        webViewSlot.withAttached { webView -> webView.takeIf(WebView::canGoForward)?.goForward() }
     }
 
     fun reload() {
-        webView?.reload()
+        webViewSlot.withAttached(WebView::reload)
     }
 
     internal fun attach(view: WebView) {
-        webView = view
+        webViewSlot.attach(view)
+    }
+
+    internal fun release(view: WebView) {
+        webViewSlot.release(view, AndroidBrowserWebViewReleaseOperations)
+    }
+}
+
+internal interface BrowserWebViewReleaseOperations<T : Any> {
+    fun stopLoading(target: T)
+    fun removeJavascriptBridge(target: T)
+    fun clearClients(target: T)
+    fun destroy(target: T)
+}
+
+internal class BrowserWebViewReleaseCoordinator<T : Any> {
+    private var attached: T? = null
+    private val released = Collections.newSetFromMap(WeakHashMap<T, Boolean>())
+
+    fun attach(target: T) {
+        attached = target
+    }
+
+    fun <R> withAttached(block: (T) -> R): R? = attached?.let(block)
+
+    fun release(target: T, operations: BrowserWebViewReleaseOperations<T>) {
+        if (!released.add(target)) return
+        operations.stopLoading(target)
+        operations.removeJavascriptBridge(target)
+        operations.clearClients(target)
+        if (attached === target) attached = null
+        operations.destroy(target)
+    }
+}
+
+private object AndroidBrowserWebViewReleaseOperations : BrowserWebViewReleaseOperations<WebView> {
+    override fun stopLoading(target: WebView) {
+        target.stopLoading()
+    }
+
+    override fun removeJavascriptBridge(target: WebView) {
+        target.removeJavascriptInterface(SNIFFER_BRIDGE_NAME)
+    }
+
+    override fun clearClients(target: WebView) {
+        target.webViewClient = WebViewClient()
+        target.webChromeClient = null
+    }
+
+    override fun destroy(target: WebView) {
+        target.destroy()
     }
 }
 
@@ -77,6 +129,7 @@ fun BrowserWebView(
                     viewModel = viewModel,
                     adBlockRepository = adBlockRepository,
                     defaultUserAgent = defaultUserAgent,
+                    controller = controller,
                 ).also { webView ->
                     controller.attach(webView)
                     if (state.address.isNotBlank()) webView.loadUrl(state.address)
@@ -101,8 +154,17 @@ fun BrowserWebView(
                     }
                 }
             },
+            onReset = null,
+            onRelease = { webView -> releaseBrowserWebView(webView, controller) },
         )
     }
+}
+
+internal fun releaseBrowserWebView(
+    webView: WebView,
+    controller: BrowserWebViewController,
+) {
+    controller.release(webView)
 }
 
 internal fun shouldBlockWebRequest(
@@ -120,6 +182,7 @@ private fun createBrowserWebView(
     viewModel: BrowserViewModel,
     adBlockRepository: AdBlockRepository,
     defaultUserAgent: String,
+    controller: BrowserWebViewController,
 ): WebView = WebView(context).apply {
     settings.javaScriptEnabled = true
     settings.domStorageEnabled = true
@@ -165,7 +228,7 @@ private fun createBrowserWebView(
             view: WebView,
             detail: RenderProcessGoneDetail,
         ): Boolean {
-            view.destroy()
+            releaseBrowserWebView(view, controller)
             viewModel.handleRendererGone()
             return true
         }

@@ -5,8 +5,17 @@
   const seen = new Set();
   const pattern = /(\.(m3u8|mp4|m4v|mov|mpd|m4s|ts|aac)(?=([?#/&]|$))|^blob:)/i;
 
-  const absolute = (url) => {
-    if (!url || typeof url !== 'string') return '';
+  const inputUrl = (input) => {
+    if (typeof input === 'string') return input;
+    if (!input || typeof input !== 'object') return '';
+    if (typeof input.url === 'string') return input.url;
+    if (typeof input.href === 'string') return input.href;
+    return '';
+  };
+
+  const absolute = (input) => {
+    const url = inputUrl(input);
+    if (!url) return '';
     try {
       return new URL(url, location.href).href;
     } catch (_) {
@@ -31,11 +40,7 @@
 
   const inspect = (input, source) => {
     if (!input) return;
-    if (typeof input === 'string') {
-      report(input, source);
-    } else if (input.url) {
-      report(input.url, source);
-    }
+    report(input, source);
   };
 
   const originalFetch = window.fetch;
