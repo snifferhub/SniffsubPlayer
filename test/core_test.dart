@@ -5,7 +5,7 @@ import 'package:sniff_sub_player/state/browser_state.dart';
 
 void main() {
   group('media classification', () {
-    test('matches the iOS resource categories', () {
+    test('matches the supported media resource categories', () {
       expect(MediaKind.classify('https://cdn.test/master.m3u8'), MediaKind.hls);
       expect(
         MediaKind.classify('https://cdn.test/video.mp4?q=1'),

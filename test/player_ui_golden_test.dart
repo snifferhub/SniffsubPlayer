@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sniff_sub_player/screens/player_screen.dart';
 
 void main() {
-  testWidgets('landscape player chrome matches the iOS composition', (
+  testWidgets('landscape player chrome matches the expected composition', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(844, 390);
@@ -35,6 +35,14 @@ void main() {
         ),
       ),
     );
+
+    final overlay = tester.getRect(find.byType(PlayerControlsOverlay));
+    final subtitle = tester.getRect(
+      find.byKey(const Key('player_subtitle_button')),
+    );
+    expect(subtitle.size, const Size(44, 38));
+    expect(subtitle.right, overlay.right - 22);
+    expect(subtitle.top, overlay.top + 14);
 
     await expectLater(
       find.byType(PlayerControlsOverlay),

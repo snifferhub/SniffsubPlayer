@@ -786,35 +786,27 @@ class PlayerControlsOverlay extends StatelessWidget {
                     iconSize: 17,
                     onPressed: onClose,
                   ),
-                  if (status.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        status,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xC2FFFFFF),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                  const Spacer(),
-                  _GlassCapsule(
-                    padding: EdgeInsets.zero,
-                    child: CupertinoButton(
-                      minimumSize: const Size.square(38),
-                      padding: const EdgeInsets.symmetric(horizontal: 13),
-                      onPressed: onSubtitle,
-                      child: Icon(
-                        hasSubtitles
-                            ? CupertinoIcons.captions_bubble_fill
-                            : CupertinoIcons.captions_bubble,
-                        color: CupertinoColors.white,
-                        size: 20,
-                      ),
-                    ),
+                  Expanded(
+                    child: status.isEmpty
+                        ? const SizedBox.shrink()
+                        : Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Text(
+                              status,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xC2FFFFFF),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                  ),
+                  _CapsuleControl(
+                    icon: hasSubtitles
+                        ? CupertinoIcons.captions_bubble_fill
+                        : CupertinoIcons.captions_bubble,
+                    onPressed: onSubtitle,
                   ),
                 ],
               ),
@@ -991,6 +983,34 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   );
 }
 
+class _CapsuleControl extends StatelessWidget {
+  const _CapsuleControl({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    key: const Key('player_subtitle_button'),
+    width: 44,
+    height: 38,
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: CupertinoButton(
+          sizeStyle: CupertinoButtonSize.small,
+          minimumSize: const Size(44, 38),
+          padding: EdgeInsets.zero,
+          color: CupertinoColors.white.withValues(alpha: .14),
+          onPressed: onPressed,
+          child: Icon(icon, size: 17, color: CupertinoColors.white),
+        ),
+      ),
+    ),
+  );
+}
+
 class _CircleControl extends StatelessWidget {
   const _CircleControl({
     required this.icon,
@@ -1019,12 +1039,8 @@ class _CircleControl extends StatelessWidget {
 }
 
 class _GlassCapsule extends StatelessWidget {
-  const _GlassCapsule({
-    required this.child,
-    this.padding = const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-  });
+  const _GlassCapsule({required this.child});
   final Widget child;
-  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) => ClipRRect(
@@ -1032,7 +1048,7 @@ class _GlassCapsule extends StatelessWidget {
     child: BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
       child: Container(
-        padding: padding,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
         color: CupertinoColors.black.withValues(alpha: .68),
         child: child,
       ),

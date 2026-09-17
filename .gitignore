@@ -13,33 +13,10 @@ Icon?
 *.swo
 *~
 
-# Xcode user state
-xcuserdata/
-*.xcuserstate
-*.xccheckout
-*.moved-aside
-
-# Xcode build outputs
-DerivedData/
+# Build outputs
 build/
-Build/
-*.xcarchive
-*.xcresult
-*.dSYM
-*.dSYM.zip
-*.ipa
-
-# Swift Package Manager build cache
-.build/
-.swiftpm/
-
-# CocoaPods / Carthage generated output
-Pods/
-Carthage/Build/
 
 # Signing material and local secrets
-*.mobileprovision
-*.provisionprofile
 *.cer
 *.p12
 *.pem
@@ -47,8 +24,6 @@ Carthage/Build/
 *.jks
 *.keystore
 key.properties
-*.local.xcconfig
-Secrets.xcconfig
 
 # Logs and temporary files
 *.log

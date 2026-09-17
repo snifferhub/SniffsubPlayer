@@ -78,43 +78,9 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  ios:
-    name: Build unsigned iOS package
-    runs-on: macos-15
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build unsigned iOS app
-        run: flutter build ios --release --no-codesign --build-number "$GITHUB_RUN_NUMBER"
-
-      - name: Package iOS app
-        run: |
-          mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app dist/SniffsubPlayer-iOS-unsigned.zip
-
-      - name: Upload iOS package
-        uses: actions/upload-artifact@v7
-        with:
-          name: ios-package
-          path: dist/*
-          if-no-files-found: error
-
   release:
     name: Publish GitHub Release
-    needs:
-      - android
-      - ios
+    needs: android
     runs-on: ubuntu-latest
     steps:
       - name: Check out source

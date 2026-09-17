@@ -1,8 +1,8 @@
 # SniffsubPlayer
 
-此分支是 Flutter 多端版本；原生 Swift/SwiftUI iOS 工程保留在 `main` 分支。
+此 `flutter` 分支是 Flutter Android 版本；原生 Swift/SwiftUI iOS 工程保留在 `main` 分支。
 
-SniffsubPlayer 是使用 Flutter 构建的跨平台网页媒体嗅探与字幕播放器。浏览器、播放器、字幕、收藏和广告过滤逻辑统一由 Dart 代码维护，Android 与 iOS 目录只保留必要的平台启动与权限配置。
+SniffsubPlayer 是使用 Flutter 构建的 Android 网页媒体嗅探与字幕播放器。浏览器、播放器、字幕、收藏和广告过滤逻辑由 Dart 代码维护，平台启动与权限配置位于 `android/` 目录。
 
 ## 功能
 
@@ -20,7 +20,6 @@ SniffsubPlayer 是使用 Flutter 构建的跨平台网页媒体嗅探与字幕�
 ├── .github/workflows/  GitHub Actions CI/CD
 ├── android/            Flutter Android 平台壳
 ├── assets/             应用图标等共享资源
-├── ios/                Flutter iOS 平台壳
 ├── lib/
 │   ├── models/         媒体、收藏和字幕模型
 │   ├── screens/        浏览器、设置、播放器与字幕界面
@@ -42,7 +41,7 @@ flutter run
 
 ```sh
 flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64
-flutter build ios --release --no-codesign
+flutter build appbundle --release --target-platform android-arm,android-arm64
 ```
 
 ## 自动发布
@@ -51,8 +50,7 @@ flutter build ios --release --no-codesign
 
 1. 安装锁定的 Flutter 依赖。
 2. 分别构建 Android `armeabi-v7a`（ARMv7）、`arm64-v8a`（ARMv8）APK，并生成仅含 ARM 架构的 AAB；不支持 x86。
-3. 在 macOS Runner 上构建未签名的 iOS App ZIP。
-4. 创建 `v<版本>-build.<运行编号>` GitHub Release，并附带 SHA-256 校验文件。
+3. 创建 `v<版本>-build.<运行编号>` GitHub Release，并附带 SHA-256 校验文件。
 
 流水线只负责编译和发布，不运行自动化测试；真机功能由维护者自行验证。
 
@@ -64,8 +62,6 @@ flutter build ios --release --no-codesign
 - `ANDROID_KEY_PASSWORD`
 
 `ANDROID_KEYSTORE_BASE64` 是 Release JKS 文件的 Base64 内容。其余三个值分别是仓库密码、Key Alias 和 Key 密码。签名文件和密码禁止提交到 Git。
-
-iOS 产物默认未签名，不能直接安装到普通 iPhone。要生成可安装 IPA，需要在 CI 中另外配置 Apple Distribution 证书、Provisioning Profile 和相应 Secrets。
 
 ## 已知限制
 

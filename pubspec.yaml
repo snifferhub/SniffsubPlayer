@@ -1,7 +1,7 @@
 name: sniff_sub_player
-description: 跨 iOS 与 Android 的嗅探字幕播放器。
+description: Android 媒体嗅探字幕播放器。
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.9.0
@@ -32,8 +32,6 @@ flutter:
 
 flutter_launcher_icons:
   android: true
-  ios: true
   image_path: assets/app_icon.png
   adaptive_icon_background: '#FFFFFF'
   adaptive_icon_foreground: assets/app_icon.png
-  remove_alpha_ios: true
