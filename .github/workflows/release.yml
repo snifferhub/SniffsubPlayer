@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -37,14 +37,50 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release-keystore.jks"
+
       - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release-keystore.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon
+
+      - name: Collect APKs
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/SniffSubPlayer-Android-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk dist/SniffSubPlayer-Android.apk
+          (cd dist && sha256sum ./*.apk > SHA256SUMS.txt)
 
       - name: Upload APKs
         uses: actions/upload-artifact@v7
         with:
           name: SniffSubPlayer-Android-${{ github.run_number }}
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+          path: dist/*
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APP_VERSION="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$APP_VERSION"
+          RELEASE_TAG="android-v${APP_VERSION}-build.${GITHUB_RUN_NUMBER}"
+          gh release create "$RELEASE_TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "SniffSubPlayer Android ${APP_VERSION} (build ${GITHUB_RUN_NUMBER})" \
+            --generate-notes \
+            --latest
