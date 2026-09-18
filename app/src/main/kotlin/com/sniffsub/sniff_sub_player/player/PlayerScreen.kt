@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -48,6 +49,7 @@ import com.sniffsub.sniff_sub_player.subtitle.subtitleAt
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 fun PlayerScreen(
     candidate: MediaCandidate,
@@ -142,6 +144,7 @@ fun PlayerScreen(
     }
 }
 
+@UnstableApi
 private fun createPlayer(context: Context, candidate: MediaCandidate): ExoPlayer {
     val headers = buildMap {
         candidate.referer.takeIf(String::isNotBlank)?.let { put("Referer", it) }

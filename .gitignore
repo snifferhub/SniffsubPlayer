@@ -9,6 +9,7 @@ Icon?
 .idea/
 .vscode/
 .worktrees/
+local.properties
 *.iml
 *.swp
 *.swo
