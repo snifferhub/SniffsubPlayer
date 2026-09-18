@@ -15,6 +15,7 @@ Icon?
 *~
 
 # Build outputs
+.gradle/
 build/
 
 # Signing material and local secrets
