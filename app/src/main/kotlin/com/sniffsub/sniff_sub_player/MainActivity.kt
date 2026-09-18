@@ -12,7 +12,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,8 +28,10 @@ import com.sniffsub.sniff_sub_player.browser.BrowserActions
 import com.sniffsub.sniff_sub_player.browser.BrowserScreen
 import com.sniffsub.sniff_sub_player.browser.BrowserViewModel
 import com.sniffsub.sniff_sub_player.browser.BrowserWebView
+import com.sniffsub.sniff_sub_player.browser.MediaCandidate
 import com.sniffsub.sniff_sub_player.browser.rememberBrowserWebViewController
 import com.sniffsub.sniff_sub_player.data.AppPreferences
+import com.sniffsub.sniff_sub_player.player.PlayerScreen
 import com.sniffsub.sniff_sub_player.settings.AdBlockSettingsActions
 import com.sniffsub.sniff_sub_player.settings.AdBlockSettingsScreen
 import com.sniffsub.sniff_sub_player.settings.BookmarksActions
@@ -75,6 +79,7 @@ private fun SniffSubPlayerApp(
     val actionExecutor = remember(coroutineScope, messageController) {
         SafeUiActionExecutor(coroutineScope, messageController::show)
     }
+    var selectedCandidate by remember { mutableStateOf<MediaCandidate?>(null) }
 
     LaunchedEffect(container.adBlockRepository, actionExecutor) {
         actionExecutor.execute("广告拦截设置加载失败") {
@@ -96,8 +101,9 @@ private fun SniffSubPlayerApp(
                 },
                 onEnableSniffer = { browserViewModel.enableSniffer() },
                 onClearCandidates = browserViewModel::clearCandidates,
-                onOpenCandidate = {
-                    browserViewModel.setTransientMessage("播放器将在后续步骤中接入")
+                onOpenCandidate = { candidate ->
+                    selectedCandidate = candidate
+                    navController.navigate(PLAYER_ROUTE)
                 },
                 onConsumeTransientMessage = browserViewModel::clearTransientMessage,
             ),
@@ -222,6 +228,21 @@ private fun SniffSubPlayerApp(
                     )
                 }
             }
+            composable(PLAYER_ROUTE) {
+                val candidate = selectedCandidate
+                if (candidate == null) {
+                    LaunchedEffect(Unit) { navController.popBackStack() }
+                } else {
+                    PlayerScreen(
+                        candidate = candidate,
+                        subtitleRepository = container.subtitleRepository,
+                        onBack = {
+                            selectedCandidate = null
+                            navController.popBackStack()
+                        },
+                    )
+                }
+            }
         }
 
         UiMessageHost(
@@ -248,4 +269,5 @@ private const val BROWSER_ROUTE = "browser"
 private const val SETTINGS_ROUTE = "settings"
 private const val BOOKMARKS_ROUTE = "bookmarks"
 private const val AD_BLOCK_ROUTE = "ad-block"
+private const val PLAYER_ROUTE = "player"
 private const val DEFAULT_ACCENT_ARGB = 0xFFE8A7BFL

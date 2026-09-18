@@ -1,8 +1,6 @@
-# SniffsubPlayer
+# SniffSubPlayer Android
 
-此 `flutter` 分支是 Flutter Android 版本；原生 Swift/SwiftUI iOS 工程保留在 `main` 分支。
-
-SniffsubPlayer 是使用 Flutter 构建的 Android 网页媒体嗅探与字幕播放器。浏览器、播放器、字幕、收藏和广告过滤逻辑由 Dart 代码维护，平台启动与权限配置位于 `android/` 目录。
+这是 SniffSubPlayer 的原生 Android 分支，使用 Kotlin、Jetpack Compose、WebView 与 Media3。后续 Android 功能以这里为主，不再把 Flutter 目录作为 Android 功能实现来源。
 
 ## 功能
 
@@ -13,43 +11,38 @@ SniffsubPlayer 是使用 Flutter 构建的 Android 网页媒体嗅探与字幕�
 - 内置 AdGuard 与 EasyList China GitHub 规则订阅，并允许添加自定义 HTTPS Raw 订阅。
 - 收藏夹、User-Agent、播放器颜色及广告过滤设置本地保存。
 
-## 目录
+## 原生目录
 
 ```text
 .
 ├── .github/workflows/  GitHub Actions CI/CD
-├── android/            Flutter Android 平台壳
-├── assets/             应用图标等共享资源
-├── lib/
-│   ├── models/         媒体、收藏和字幕模型
-│   ├── screens/        浏览器、设置、播放器与字幕界面
-│   ├── services/       嗅探、字幕与广告过滤服务
-│   └── state/          浏览器状态与本地持久化
-└── test/               核心逻辑与播放器界面测试
+├── app/src/main/kotlin/  Compose 界面、WebView、Media3、字幕和广告过滤
+├── app/src/test/         JVM 单元测试与 Compose 合约测试
+├── app/src/main/assets/  WebView 嗅探脚本
+└── gradle/               Gradle Wrapper
 ```
 
 ## 本地开发
 
-需要 Flutter 3.47.4：
+需要 JDK 17、Android SDK 36：
 
 ```sh
-flutter pub get
-flutter run
+./gradlew testDebugUnitTest
+./gradlew assembleDebug
 ```
 
 常用构建命令：
 
 ```sh
-flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64
-flutter build appbundle --release --target-platform android-arm,android-arm64
+./gradlew assembleRelease
 ```
 
 ## 自动发布
 
-每次推送到 `main` 后，[Build and Release](.github/workflows/release.yml) 会自动：
+每次推送 Android 发布分支后，[Build and Release](.github/workflows/release.yml) 可自动：
 
-1. 安装锁定的 Flutter 依赖。
-2. 分别构建 Android `armeabi-v7a`（ARMv7）、`arm64-v8a`（ARMv8）APK，并生成仅含 ARM 架构的 AAB；不支持 x86。
+1. 使用 Gradle 构建原生 Compose Android APK。
+2. 生成 `arm64-v8a` APK；当前应用配置不包含 x86。
 3. 创建 `v<版本>-build.<运行编号>` GitHub Release，并附带 SHA-256 校验文件。
 
 流水线只负责编译和发布，不运行自动化测试；真机功能由维护者自行验证。
