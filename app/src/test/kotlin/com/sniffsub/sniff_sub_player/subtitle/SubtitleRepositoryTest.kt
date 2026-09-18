@@ -80,6 +80,21 @@ class SubtitleRepositoryTest {
     }
 
     @Test
+    fun search_discards_http_urls_without_a_valid_host() = runTest {
+        val body = """
+            {
+              "data": [
+                {"name":"Missing authority","url":"https:/one.srt"},
+                {"name":"Missing host","url":"https:///two.vtt"}
+              ]
+            }
+        """.trimIndent()
+        val repository = SubtitleRepository(FakeHttpFetcher.response(body.encodeToByteArray()))
+
+        assertEquals(emptyList<OnlineSubtitle>(), repository.search("ABC-123").getOrThrow())
+    }
+
+    @Test
     fun malformed_json_is_reported_as_a_failure() = runTest {
         val repository = SubtitleRepository(FakeHttpFetcher.response("{".encodeToByteArray()))
 
@@ -134,6 +149,18 @@ class SubtitleRepositoryTest {
 
         val error = repository.download("file:///sdcard/private.srt").exceptionOrNull()
         assertTrue(error is IllegalArgumentException)
+        assertTrue(fetcher.requests.isEmpty())
+    }
+
+    @Test
+    fun download_rejects_http_urls_without_a_valid_host_before_fetching() = runTest {
+        val fetcher = FakeHttpFetcher()
+        val repository = SubtitleRepository(fetcher)
+
+        listOf("https:/one.srt", "https:///two.vtt").forEach { url ->
+            val error = repository.download(url).exceptionOrNull()
+            assertTrue(error is IllegalArgumentException)
+        }
         assertTrue(fetcher.requests.isEmpty())
     }
 }

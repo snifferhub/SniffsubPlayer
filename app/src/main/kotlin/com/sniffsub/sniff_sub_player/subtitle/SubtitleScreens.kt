@@ -7,6 +7,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -55,10 +56,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -106,12 +111,19 @@ fun SubtitleSearchScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    BackHandler(enabled = showPasteEditor || showSubtitlecat) {
+        when {
+            showPasteEditor -> showPasteEditor = false
+            showSubtitlecat -> showSubtitlecat = false
+        }
+    }
+
     val documentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
-            runCatching { readSubtitleDocument(context, uri) }
+            captureSubtitleImport { readSubtitleDocument(context, uri) }
                 .onSuccess { text -> onSubtitleSelected(text, uri.lastPathSegment ?: "字幕文件") }
                 .onFailure { error -> status = "字幕导入失败: ${error.message ?: "无法读取文件"}" }
         }
@@ -390,19 +402,39 @@ private fun releaseSubtitlecatWebView(webView: WebView) {
 
 private suspend fun readSubtitleDocument(context: Context, uri: Uri): String = withContext(Dispatchers.IO) {
     val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        var total = 0
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            total += count
-            if (total > MAXIMUM_IMPORT_BYTES) throw IOException("字幕文件超过 12 MiB")
-            output.write(buffer, 0, count)
-        }
-        output.toByteArray()
+        readSubtitleStream(input, MAXIMUM_IMPORT_BYTES)
     } ?: throw IOException("无法读取文件")
     decodeSubtitleBytes(bytes)
+}
+
+internal suspend fun readSubtitleStream(
+    input: InputStream,
+    maximumBytes: Int,
+): ByteArray {
+    require(maximumBytes >= 0) { "maximumBytes must not be negative" }
+    val output = ByteArrayOutputStream(minOf(maximumBytes, DEFAULT_BUFFER_SIZE))
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var total = 0
+    while (true) {
+        currentCoroutineContext().ensureActive()
+        val count = input.read(buffer)
+        currentCoroutineContext().ensureActive()
+        if (count < 0) break
+        total += count
+        if (total > maximumBytes) throw IOException("字幕文件超过 12 MiB")
+        output.write(buffer, 0, count)
+    }
+    return output.toByteArray()
+}
+
+internal suspend inline fun <T> captureSubtitleImport(
+    crossinline block: suspend () -> T,
+): Result<T> = try {
+    Result.success(block())
+} catch (cancellation: CancellationException) {
+    throw cancellation
+} catch (error: Exception) {
+    Result.failure(error)
 }
 
 private const val MAXIMUM_IMPORT_BYTES = 12 * 1024 * 1024

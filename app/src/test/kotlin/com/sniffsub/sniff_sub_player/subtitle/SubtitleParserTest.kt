@@ -67,6 +67,26 @@ class SubtitleParserTest {
     }
 
     @Test
+    fun overflowing_non_empty_hours_are_invalid_instead_of_becoming_zero() {
+        val cues = parseSubtitles(
+            """
+                1
+                999999999999999999999999:00:01.000 --> 999999999999999999999999:00:02.000
+                Overflow
+
+                2
+                00:00:03.000 --> 00:00:04.000
+                Valid
+            """.trimIndent(),
+        )
+
+        assertEquals(
+            listOf(SubtitleCue(startMs = 3_000, endMs = 4_000, text = "Valid")),
+            cues,
+        )
+    }
+
+    @Test
     fun cues_are_sorted_and_positive_offset_is_applied() {
         val cues = parseSubtitles(
             """

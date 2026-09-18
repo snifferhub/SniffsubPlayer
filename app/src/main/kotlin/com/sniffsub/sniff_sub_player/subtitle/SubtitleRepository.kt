@@ -25,7 +25,7 @@ class SubtitleRepository(
     }
 
     suspend fun download(url: String): Result<String> = resultOfSuspend {
-        require(isHttpUrl(url)) { "Subtitle URL must use HTTP or HTTPS" }
+        require(parseHttpUri(url) != null) { "Subtitle URL must be an absolute HTTP or HTTPS URL" }
         httpFetcher.get(
             url = url,
             headers = DOWNLOAD_HEADERS,
@@ -58,25 +58,25 @@ private fun JsonObject.nullableStringValue(key: String): String? {
 }
 
 private fun isSubtitleUrl(value: String): Boolean {
-    val uri = try {
-        URI(value)
-    } catch (_: Exception) {
-        return false
-    }
-    if (!uri.scheme.equals("http", ignoreCase = true) && !uri.scheme.equals("https", ignoreCase = true)) {
-        return false
-    }
+    val uri = parseHttpUri(value) ?: return false
     val path = uri.path?.lowercase().orEmpty()
     return path.endsWith(".srt") || path.endsWith(".vtt")
 }
 
-private fun isHttpUrl(value: String): Boolean {
-    val scheme = try {
-        URI(value).scheme
+private fun parseHttpUri(value: String): URI? {
+    val uri = try {
+        URI(value)
     } catch (_: Exception) {
-        return false
+        return null
     }
-    return scheme.equals("http", ignoreCase = true) || scheme.equals("https", ignoreCase = true)
+    val validScheme = uri.scheme.equals("http", ignoreCase = true) ||
+        uri.scheme.equals("https", ignoreCase = true)
+    return uri.takeIf {
+        validScheme &&
+            !it.isOpaque &&
+            !it.rawAuthority.isNullOrBlank() &&
+            !it.host.isNullOrBlank()
+    }
 }
 
 private suspend inline fun <T> resultOfSuspend(crossinline block: suspend () -> T): Result<T> = try {

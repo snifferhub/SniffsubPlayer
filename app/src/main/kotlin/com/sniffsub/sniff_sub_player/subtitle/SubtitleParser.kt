@@ -77,7 +77,8 @@ private fun parseCueBlock(block: String, offsetMs: Long): SubtitleCue? {
 
 private fun parseTimestamp(value: String): Long? {
     val match = TIMESTAMP_PATTERN.matchEntire(value) ?: return null
-    val hours = match.groupValues[1].takeIf(String::isNotEmpty)?.toLongOrNull() ?: 0L
+    val hoursText = match.groupValues[1]
+    val hours = if (hoursText.isEmpty()) 0L else hoursText.toLongOrNull() ?: return null
     val minutes = match.groupValues[2].toLongOrNull() ?: return null
     val seconds = match.groupValues[3].toLongOrNull() ?: return null
     if (minutes !in 0L..59L || seconds !in 0L..59L) return null

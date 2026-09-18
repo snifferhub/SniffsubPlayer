@@ -1,8 +1,15 @@
 package com.sniffsub.sniff_sub_player.subtitle
 
+import java.io.InputStream
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class SubtitleScreensContractTest {
@@ -42,5 +49,40 @@ class SubtitleScreensContractTest {
         assertFalse(isSafeSubtitlecatNavigation("file:///sdcard/private.txt"))
         assertFalse(isSafeSubtitlecatNavigation("javascript:alert(1)"))
         assertFalse(isSafeSubtitlecatNavigation("not a url"))
+    }
+
+    @Test
+    fun import_failure_capture_rethrows_coroutine_cancellation() = runBlocking {
+        try {
+            captureSubtitleImport<String> { throw CancellationException("cancelled") }
+            fail("CancellationException must be rethrown")
+        } catch (expected: CancellationException) {
+            assertEquals("cancelled", expected.message)
+        }
+    }
+
+    @Test
+    fun bounded_import_read_stops_after_coroutine_cancellation() = runBlocking {
+        val reads = AtomicInteger()
+        lateinit var readerJob: kotlinx.coroutines.Job
+        val input = object : InputStream() {
+            override fun read(): Int = error("bulk read expected")
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                reads.incrementAndGet()
+                buffer[offset] = 0
+                readerJob.cancel(CancellationException("stop reading"))
+                return 1
+            }
+        }
+        readerJob = launch(start = CoroutineStart.LAZY) {
+            readSubtitleStream(input, maximumBytes = 1_024)
+        }
+
+        readerJob.start()
+        readerJob.join()
+
+        assertTrue(readerJob.isCancelled)
+        assertEquals(1, reads.get())
     }
 }
