@@ -1,5 +1,10 @@
 package com.sniffsub.sniff_sub_player.browser
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -51,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -80,6 +86,7 @@ fun BrowserScreen(
     webViewContent: @Composable () -> Unit = {},
 ) {
     var addressText by remember { mutableStateOf(state.address) }
+    var addressFocused by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -109,35 +116,86 @@ fun BrowserScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = state.title.ifBlank { "SniffSubPlayer" },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(
-                        onClick = actions.onToggleBookmark,
-                        enabled = currentUrl.isNotEmpty(),
-                        modifier = Modifier.testTag("bookmark_button"),
-                    ) {
-                        Icon(
-                            imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                            contentDescription = if (isBookmarked) "取消收藏" else "收藏",
+            Column {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Text(
+                            text = state.title.ifBlank { "SniffSubPlayer" },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = actions.onOpenSettings,
-                        modifier = Modifier.testTag("settings_button"),
+                    },
+                    navigationIcon = {
+                        IconButton(
+                            onClick = actions.onToggleBookmark,
+                            enabled = currentUrl.isNotEmpty(),
+                            modifier = Modifier.testTag("bookmark_button"),
+                        ) {
+                            Icon(
+                                imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = if (isBookmarked) "取消收藏" else "收藏",
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = actions.onOpenSettings,
+                            modifier = Modifier.testTag("settings_button"),
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = "设置")
+                        }
+                    },
+                )
+
+                Surface(tonalElevation = 2.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                            .testTag("address_row"),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置")
+                        AnimatedVisibility(
+                            visible = !addressFocused,
+                            enter = fadeIn() + expandHorizontally(expandFrom = Alignment.Start),
+                            exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.Start),
+                        ) {
+                            Row {
+                                IconButton(
+                                    onClick = actions.onBack,
+                                    enabled = state.canGoBack,
+                                    modifier = Modifier.testTag("back_button"),
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "后退")
+                                }
+                                IconButton(
+                                    onClick = actions.onForward,
+                                    enabled = state.canGoForward,
+                                    modifier = Modifier.testTag("forward_button"),
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前进")
+                                }
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = addressText,
+                            onValueChange = { addressText = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .onFocusChanged { addressFocused = it.isFocused }
+                                .testTag("address_field"),
+                            singleLine = true,
+                            placeholder = { Text("输入网址或搜索") },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                            keyboardActions = KeyboardActions(onGo = { submitAddress() }),
+                        )
+                        TextButton(onClick = ::submitAddress) {
+                            Text("前往")
+                        }
                     }
-                },
-            )
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
@@ -146,45 +204,6 @@ fun BrowserScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                    .testTag("address_row"),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(
-                    onClick = actions.onBack,
-                    enabled = state.canGoBack,
-                    modifier = Modifier.testTag("back_button"),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "后退")
-                }
-                IconButton(
-                    onClick = actions.onForward,
-                    enabled = state.canGoForward,
-                    modifier = Modifier.testTag("forward_button"),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前进")
-                }
-                OutlinedTextField(
-                    value = addressText,
-                    onValueChange = { addressText = it },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("address_field"),
-                    singleLine = true,
-                    placeholder = { Text("输入网址或搜索") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(
-                        onGo = { submitAddress() },
-                    ),
-                )
-                TextButton(onClick = ::submitAddress) {
-                    Text("前往")
-                }
-            }
-
             if (state.loading) {
                 LinearProgressIndicator(
                     progress = { state.progress.toFloat().coerceIn(0f, 1f) },

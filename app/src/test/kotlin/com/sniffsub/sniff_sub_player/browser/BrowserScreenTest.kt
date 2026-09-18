@@ -25,6 +25,19 @@ class BrowserScreenTest {
     val compose = createComposeRule()
 
     @Test
+    fun empty_home_keeps_address_entry_visible() {
+        compose.setContent {
+            BrowserScreen(
+                state = BrowserUiState(),
+                actions = noOpActions(),
+            )
+        }
+
+        compose.onNodeWithTag("address_row").assertExists()
+        compose.onNodeWithTag("address_field").assertExists().assertIsEnabled()
+    }
+
+    @Test
     fun chrome_keeps_expected_controls_and_enabled_states() {
         compose.setContent {
             BrowserScreen(
