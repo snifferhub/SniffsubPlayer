@@ -95,6 +95,24 @@ class AdRuleCompilerTest {
         assertTrue(rules.blocks("https://ad15000.example/banner"))
     }
 
+    @Test fun jable_page_rules_hide_banners_without_blocking_video_or_normal_images() {
+        // Representative rules from the built-in EasyList China subscription.
+        val rules = compile(
+            "||jable.tv/assets/*0.gif",
+            "||jable.tv/assets/images/*-slider.",
+            "jable.tv###jimds-slider",
+            "jable.tv##div[class^=\"root-\"]",
+        )
+        assertEquals(4, rules.convertedCount)
+        assertEquals(0, rules.discardedCount)
+        assertEquals(listOf("#jimds-slider", "div[class^=\"root-\"]"), rules.selectors("https://jable.tv/videos/example/"))
+        assertTrue(rules.blocks(AdRequest("https://jable.tv/assets/images/promo-slider.jpg", "https://jable.tv", ResourceType.IMAGE)))
+        assertTrue(rules.blocks(AdRequest("https://jable.tv/assets/banner0.gif", "https://jable.tv", ResourceType.IMAGE)))
+        assertFalse(rules.blocks(AdRequest("https://jable.tv/assets/images/poster.jpg", "https://jable.tv", ResourceType.IMAGE)))
+        assertFalse(rules.blocks(AdRequest("https://media.example/movie.m3u8", "https://jable.tv", ResourceType.MEDIA)))
+        assertEquals(emptyList<String>(), rules.selectors("https://other.example"))
+    }
+
     @Test fun duplicates_and_configured_limits_are_counted() {
         val rules = AdRuleCompiler(2).compile(sequenceOf("||one.example^", "||one.example^", "##.ad", "||two.example^"))
         assertEquals(2, rules.convertedCount)
