@@ -1,11 +1,12 @@
 package com.sniffsub.sniff_sub_player.browser
 
+import androidx.activity.ComponentActivity
 import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -22,7 +23,7 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class BrowserScreenTest {
     @get:Rule
-    val compose = createComposeRule()
+    val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test
     fun empty_home_keeps_address_entry_visible() {
@@ -107,6 +108,25 @@ class BrowserScreenTest {
 
         assertEquals("example.com", submitted)
         addressField.assertIsNotFocused()
+    }
+
+    @Test
+    fun system_back_leaves_address_editing_before_web_history() {
+        var backCount = 0
+        compose.setContent {
+            BrowserScreen(
+                state = sampleState().copy(canGoBack = true),
+                actions = noOpActions().copy(onBack = { backCount++ }),
+            )
+        }
+
+        compose.onNodeWithTag("address_field").performClick()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("address_field").assertIsNotFocused()
+        compose.runOnIdle { assertEquals(0, backCount) }
+
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.runOnIdle { assertEquals(1, backCount) }
     }
 
     @Test

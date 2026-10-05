@@ -2,6 +2,7 @@ package com.sniffsub.sniff_sub_player
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
@@ -19,10 +20,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.sniffsub.sniff_sub_player.browser.BrowserActions
 import com.sniffsub.sniff_sub_player.browser.BrowserScreen
@@ -67,6 +70,8 @@ private fun SniffSubPlayerApp(
     browserViewModel: BrowserViewModel,
 ) {
     val navController = rememberNavController()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route ?: BROWSER_ROUTE
     val coroutineScope = rememberCoroutineScope()
     val browserState by browserViewModel.uiState.collectAsState()
     val preferences by container.preferencesRepository.values.collectAsState(
@@ -90,10 +95,13 @@ private fun SniffSubPlayerApp(
     Box(modifier = Modifier.fillMaxSize()) {
         BrowserScreen(
             state = browserState,
+            isActive = currentRoute == BROWSER_ROUTE,
             accentArgb = preferences.accentArgb,
             actions = BrowserActions(
                 onToggleBookmark = browserViewModel::toggleBookmark,
-                onOpenSettings = { navController.navigate(SETTINGS_ROUTE) },
+                onOpenSettings = {
+                    navController.navigate(SETTINGS_ROUTE) { launchSingleTop = true }
+                },
                 onBack = webViewController::goBack,
                 onForward = webViewController::goForward,
                 onSubmitAddress = { input ->
@@ -121,7 +129,10 @@ private fun SniffSubPlayerApp(
         NavHost(
             navController = navController,
             startDestination = BROWSER_ROUTE,
-            modifier = Modifier.fillMaxSize(),
+            // The empty browser destination must not cover the persistent WebView.
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(if (currentRoute == BROWSER_ROUTE) -1f else 1f),
         ) {
             composable(BROWSER_ROUTE) { }
             composable(SETTINGS_ROUTE) {
@@ -129,7 +140,7 @@ private fun SniffSubPlayerApp(
                     SettingsScreen(
                         preferences = preferences,
                         actions = SettingsActions(
-                            onBack = navController::popBackStack,
+                            onBack = { navController.popBackStack() },
                             onUserAgentSelected = { value ->
                                 actionExecutor.launch("User Agent 更新失败") {
                                     container.preferencesRepository.update { it.copy(userAgent = value) }
@@ -158,7 +169,7 @@ private fun SniffSubPlayerApp(
                     BookmarksScreen(
                         bookmarks = preferences.bookmarks,
                         actions = BookmarksActions(
-                            onBack = navController::popBackStack,
+                            onBack = { navController.popBackStack() },
                             onOpenBookmark = { bookmark ->
                                 browserViewModel.submitAddress(bookmark.url)
                                     ?.let(webViewController::loadUrl)
@@ -182,7 +193,7 @@ private fun SniffSubPlayerApp(
                     AdBlockSettingsScreen(
                         state = adBlockState,
                         actions = AdBlockSettingsActions(
-                            onBack = navController::popBackStack,
+                            onBack = { navController.popBackStack() },
                             onSetEnabled = { enabled ->
                                 actionExecutor.launch("广告拦截开关更新失败") {
                                     container.adBlockRepository.setEnabled(enabled)
@@ -245,10 +256,16 @@ private fun SniffSubPlayerApp(
             }
         }
 
+        // PlayerScreen handles its own subtitle panel before leaving playback.
+        BackHandler(enabled = currentRoute != BROWSER_ROUTE && currentRoute != PLAYER_ROUTE) {
+            navController.popBackStack()
+        }
+
         UiMessageHost(
             message = globalMessage,
             onConsumed = messageController::consume,
             modifier = Modifier
+                .zIndex(2f)
                 .align(Alignment.BottomCenter)
                 .padding(16.dp),
         )
