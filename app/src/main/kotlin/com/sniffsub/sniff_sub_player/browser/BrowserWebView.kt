@@ -14,10 +14,15 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.sniffsub.sniff_sub_player.adblock.AdBlockRepository
+import com.sniffsub.sniff_sub_player.adblock.AdRequest
+import com.sniffsub.sniff_sub_player.adblock.ResourceType
+import com.sniffsub.sniff_sub_player.adblock.cosmeticFilteringScript
 import java.io.ByteArrayInputStream
 import java.net.URI
 import java.util.Collections
@@ -25,6 +30,13 @@ import java.util.WeakHashMap
 
 class BrowserWebViewController internal constructor() {
     private val webViewSlot = BrowserWebViewReleaseCoordinator<WebView>()
+    private val cosmeticScripts = WeakHashMap<WebView, String>()
+
+    internal fun applyCosmeticScript(view: WebView, script: String) {
+        if (cosmeticScripts[view] == script) return
+        cosmeticScripts[view] = script
+        view.evaluateJavascript(script, null)
+    }
 
     fun loadUrl(url: String) {
         webViewSlot.withAttached { it.loadUrl(url) }
@@ -111,12 +123,17 @@ fun BrowserWebView(
     modifier: Modifier = Modifier,
     controller: BrowserWebViewController = rememberBrowserWebViewController(),
 ) {
+    val adBlockState by adBlockRepository.state.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val defaultUserAgent = remember(context) { WebSettings.getDefaultUserAgent(context) }
     val snifferScript = remember(context) {
         runCatching {
             context.assets.open(SNIFFER_ASSET_NAME).bufferedReader().use { it.readText() }
         }.getOrNull()
+    }
+
+    val cosmeticScript = remember(adBlockState.rulesRevision, state.currentPageUrl) {
+        cosmeticFilteringScript(adBlockRepository.selectors(state.currentPageUrl))
     }
 
     key(state.webViewGeneration) {
@@ -146,6 +163,8 @@ fun BrowserWebView(
                 ) {
                     webView.loadUrl(requestedAddress)
                 }
+                // Observe the repository so toggles/updates also remove or replace existing CSS.
+                controller.applyCosmeticScript(webView, cosmeticScript)
                 if (state.snifferEnabled) {
                     if (snifferScript == null) {
                         viewModel.setTransientMessage("嗅探脚本读取失败")
@@ -196,19 +215,25 @@ private fun createBrowserWebView(
         SNIFFER_BRIDGE_NAME,
     )
 
+    val pageUrl = java.util.concurrent.atomic.AtomicReference(state.currentPageUrl)
+
     webViewClient = object : WebViewClient() {
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+            pageUrl.set(url)
             viewModel.updatePage(url = url, started = true)
             viewModel.setNavigation(view.canGoBack(), view.canGoForward())
         }
 
         override fun onPageFinished(view: WebView, url: String) {
+            view.evaluateJavascript(cosmeticFilteringScript(adBlockRepository.selectors(url)), null)
             viewModel.updatePage(url = url, pageTitle = view.title)
             viewModel.setLoading(loading = false, progress = 1.0)
             viewModel.setNavigation(view.canGoBack(), view.canGoForward())
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            pageUrl.set(url)
+            view.evaluateJavascript(cosmeticFilteringScript(adBlockRepository.selectors(url)), null)
             viewModel.updatePage(url = url)
             viewModel.setNavigation(view.canGoBack(), view.canGoForward())
         }
@@ -238,7 +263,9 @@ private fun createBrowserWebView(
             request: WebResourceRequest,
         ): WebResourceResponse? {
             val url = request.url.toString()
-            if (!shouldBlockWebRequest(url, adBlockRepository::blocks)) return null
+            if (!shouldBlockWebRequest(url) {
+                    adBlockRepository.blocks(AdRequest(it, pageUrl.get(), classifyWebResource(request)))
+                }) return null
             return WebResourceResponse(
                 "text/plain",
                 Charsets.UTF_8.name(),
@@ -279,3 +306,32 @@ private class SniffJavascriptBridge(
 private const val SNIFFER_ASSET_NAME = "sniffer.js"
 private const val SNIFFER_BRIDGE_NAME = "SniffBridge"
 private const val MAXIMUM_BRIDGE_MESSAGE_LENGTH = 20_000
+
+internal fun classifyWebResource(request: WebResourceRequest): ResourceType = classifyWebResource(
+    request.url.toString(), request.isForMainFrame, request.requestHeaders,
+)
+
+internal fun classifyWebResource(url: String, isMainFrame: Boolean, headers: Map<String, String>): ResourceType {
+    if (isMainFrame) return ResourceType.DOCUMENT
+    fun header(name: String) = headers.entries.firstOrNull { it.key.equals(name, true) }?.value.orEmpty().lowercase()
+    when (header("Sec-Fetch-Dest")) {
+        "script", "worker", "sharedworker", "serviceworker" -> return ResourceType.SCRIPT
+        "image" -> return ResourceType.IMAGE
+        "style" -> return ResourceType.STYLESHEET
+        "font" -> return ResourceType.FONT
+        "audio", "video", "track" -> return ResourceType.MEDIA
+        "iframe", "frame", "document" -> return ResourceType.SUBDOCUMENT
+    }
+    if (header("X-Requested-With") == "xmlhttprequest") return ResourceType.XMLHTTPREQUEST
+    val path = runCatching { URI(url).path.orEmpty().lowercase() }.getOrDefault("")
+    val extension = path.substringAfterLast('.', "")
+    return when {
+        extension in setOf("js", "mjs") -> ResourceType.SCRIPT
+        extension == "css" -> ResourceType.STYLESHEET
+        extension in setOf("png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "avif") || header("Accept").startsWith("image/") -> ResourceType.IMAGE
+        extension in setOf("woff", "woff2", "ttf", "otf") -> ResourceType.FONT
+        extension in setOf("mp4", "m3u8", "mpd", "webm", "ts", "m4s", "mp3", "aac", "ogg") -> ResourceType.MEDIA
+        header("Accept").contains("text/html") -> ResourceType.SUBDOCUMENT
+        else -> ResourceType.OTHER
+    }
+}

@@ -38,6 +38,7 @@ data class AppPreferences(
     val adBlockConfigurationNeedsUpdate: Boolean = false,
     val subscriptions: List<StoredSubscription> = emptyList(),
     val compiledFilters: List<String> = emptyList(),
+    val subscriptionRuleSources: Map<String, String> = emptyMap(),
     val sourceRulesCount: Int = 0,
     val convertedRulesCount: Int = 0,
     val discardedRulesCount: Int = 0,

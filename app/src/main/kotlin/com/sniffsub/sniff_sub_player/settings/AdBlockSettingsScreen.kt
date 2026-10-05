@@ -125,7 +125,7 @@ fun AdBlockSettingsScreen(
 
             SettingsSection(
                 title = "规则状态",
-                footer = "下载或转换失败时会继续保留上一次成功的规则。",
+                footer = "订阅分别更新，下载失败时保留该订阅已缓存的规则。",
             ) {
                 SettingsRow(
                     label = "立即更新规则",
@@ -152,9 +152,9 @@ fun AdBlockSettingsScreen(
                 HorizontalDivider()
                 SettingsRow(label = "源规则", value = state.sourceRulesCount.toString())
                 HorizontalDivider()
-                SettingsRow(label = "跨平台规则", value = state.convertedRulesCount.toString())
+                SettingsRow(label = "有效规则", value = state.convertedRulesCount.toString())
                 HorizontalDivider()
-                SettingsRow(label = "跳过或超限", value = state.discardedRulesCount.toString())
+                SettingsRow(label = "不支持或重复", value = state.discardedRulesCount.toString())
                 if (state.configurationNeedsUpdate) {
                     HorizontalDivider()
                     Text(

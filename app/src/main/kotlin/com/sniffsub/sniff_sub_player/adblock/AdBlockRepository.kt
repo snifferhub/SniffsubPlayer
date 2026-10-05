@@ -7,6 +7,7 @@ import com.sniffsub.sniff_sub_player.util.HttpFetcher
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,17 +31,22 @@ class AdBlockRepository(
 
     val state: StateFlow<AdBlockState> = mutableState.asStateFlow()
 
-    fun blocks(url: String): Boolean = mutableState.value.isEnabled && compiledRules.get().blocks(url)
+    fun blocks(url: String): Boolean = blocks(AdRequest(url))
+
+    fun blocks(request: AdRequest): Boolean = mutableState.value.isEnabled && compiledRules.get().blocks(request)
+
+    fun selectors(pageUrl: String): List<String> = if (mutableState.value.isEnabled) compiledRules.get().selectors(pageUrl) else emptyList()
 
     suspend fun restore() {
         val shouldRefresh = operationMutex.withLock {
             val preferences = preferencesRepository.values.first()
             val subscriptions = mergeBuiltInSubscriptions(preferences.subscriptions)
-            val restoredRules = withContext(ruleDispatcher) { restoreRules(preferences) }
+            val restoredRules = withContext(ruleDispatcher) { restoreRules(preferences, subscriptions) }
             val storedSubscriptions = subscriptions.map(AdBlockSubscription::toStored)
             val subscriptionsChanged = storedSubscriptions != preferences.subscriptions
             val configurationNeedsUpdate =
-                preferences.adBlockConfigurationNeedsUpdate || subscriptionsChanged
+                preferences.adBlockConfigurationNeedsUpdate || subscriptionsChanged ||
+                    (preferences.compiledFilters.isNotEmpty() && preferences.subscriptionRuleSources.isEmpty())
 
             compiledRules.set(restoredRules)
             mutableState.value = AdBlockState(
@@ -52,6 +58,7 @@ class AdBlockRepository(
                 convertedRulesCount = restoredRules.convertedCount,
                 discardedRulesCount = restoredRules.discardedCount,
                 lastUpdatedAtEpochMs = preferences.lastUpdatedAtEpochMs,
+                rulesRevision = mutableState.value.rulesRevision + 1,
             )
 
             if (subscriptionsChanged) {
@@ -63,7 +70,9 @@ class AdBlockRepository(
                 }
             }
 
-            preferences.adBlockEnabled && preferences.automaticUpdatesEnabled
+            preferences.adBlockEnabled && preferences.automaticUpdatesEnabled &&
+                (configurationNeedsUpdate || preferences.lastUpdatedAtEpochMs == null ||
+                    nowEpochMs() - preferences.lastUpdatedAtEpochMs >= 24 * 60 * 60 * 1_000L)
         }
         if (shouldRefresh) refresh()
     }
@@ -83,7 +92,7 @@ class AdBlockRepository(
                 url = normalizedUrl,
             )
             persistSubscriptions(updated, configurationNeedsUpdate = true)
-            mutableState.value = current.copy(
+            mutableState.value = mutableState.value.copy(
                 subscriptions = updated,
                 configurationNeedsUpdate = true,
                 errorMessage = null,
@@ -98,7 +107,7 @@ class AdBlockRepository(
 
         val updated = current.subscriptions.filterNot { it.id == id }
         persistSubscriptions(updated, configurationNeedsUpdate = true)
-        mutableState.value = current.copy(
+        mutableState.value = mutableState.value.copy(
             subscriptions = updated,
             configurationNeedsUpdate = true,
         )
@@ -112,7 +121,7 @@ class AdBlockRepository(
             if (subscription.id == id) subscription.copy(enabled = enabled) else subscription
         }
         persistSubscriptions(updated, configurationNeedsUpdate = true)
-        mutableState.value = current.copy(
+        mutableState.value = mutableState.value.copy(
             subscriptions = updated,
             configurationNeedsUpdate = true,
         )
@@ -120,7 +129,7 @@ class AdBlockRepository(
 
     suspend fun setEnabled(enabled: Boolean) = operationMutex.withLock {
         preferencesRepository.update { current -> current.copy(adBlockEnabled = enabled) }
-        mutableState.value = mutableState.value.copy(isEnabled = enabled)
+        mutableState.value = mutableState.value.copy(isEnabled = enabled, rulesRevision = mutableState.value.rulesRevision + 1)
     }
 
     suspend fun setAutomaticUpdatesEnabled(enabled: Boolean) = operationMutex.withLock {
@@ -132,46 +141,68 @@ class AdBlockRepository(
         val subscriptions = mutableState.value.subscriptions.filter(AdBlockSubscription::enabled)
         mutableState.value = mutableState.value.copy(isUpdating = true, errorMessage = null)
         val outcome = runCatching {
-            val sources = subscriptions.map { subscription ->
-                httpFetcher.get(
-                    url = subscription.url,
-                    headers = mapOf(USER_AGENT_HEADER to USER_AGENT_VALUE),
-                    timeoutMillis = DOWNLOAD_TIMEOUT_MILLIS,
-                    maximumBytes = MAXIMUM_DOWNLOAD_BYTES,
-                )
-            }
-            val candidate = withContext(ruleDispatcher) {
-                val lines = sources.asSequence().flatMap { bytes ->
-                    bytes.toString(Charsets.UTF_8).lineSequence()
+            val preferences = preferencesRepository.values.first()
+            val sources = preferences.subscriptionRuleSources.toMutableMap()
+            val failures = mutableListOf<String>()
+            var downloaded = 0
+            for (subscription in subscriptions) {
+                try {
+                    val text = httpFetcher.get(
+                        url = subscription.url,
+                        headers = mapOf(USER_AGENT_HEADER to USER_AGENT_VALUE),
+                        timeoutMillis = DOWNLOAD_TIMEOUT_MILLIS,
+                        maximumBytes = MAXIMUM_DOWNLOAD_BYTES,
+                    ).toString(Charsets.UTF_8).removePrefix("\uFEFF")
+                    require(!text.trimStart().startsWith("<")) { "订阅返回了网页，而非规则文件" }
+                    val validation = withContext(ruleDispatcher) { compiler.compile(text.lineSequence()) }
+                    require(validation.convertedCount > 0) { "订阅没有可用规则" }
+                    sources[subscription.url] = text
+                    downloaded++
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    failures += "${subscription.name}: ${error.message ?: "下载失败"}"
                 }
-                compiler.compile(lines)
+            }
+            if (subscriptions.isNotEmpty() && downloaded == 0) {
+                throw java.io.IOException(failures.joinToString("；"))
+            }
+            val enabledUrls = subscriptions.map { it.url }.toSet()
+            val retainedSources = sources.filterKeys { url -> mutableState.value.subscriptions.any { it.url == url } }
+            val candidate = withContext(ruleDispatcher) {
+                compiler.compile(retainedSources.asSequence().filter { it.key in enabledUrls }.flatMap { it.value.lineSequence() })
             }
             val updatedAt = nowEpochMs()
 
             preferencesRepository.update { current ->
                 current.copy(
                     compiledFilters = candidate.patterns,
+                    subscriptionRuleSources = retainedSources,
                     sourceRulesCount = candidate.sourceCount,
                     convertedRulesCount = candidate.convertedCount,
                     discardedRulesCount = candidate.discardedCount,
                     lastUpdatedAtEpochMs = updatedAt,
-                    adBlockConfigurationNeedsUpdate = false,
+                    adBlockConfigurationNeedsUpdate = failures.isNotEmpty(),
                 )
             }
 
             compiledRules.set(candidate)
             mutableState.value = mutableState.value.copy(
                 isUpdating = false,
-                configurationNeedsUpdate = false,
+                configurationNeedsUpdate = failures.isNotEmpty(),
                 sourceRulesCount = candidate.sourceCount,
                 convertedRulesCount = candidate.convertedCount,
                 discardedRulesCount = candidate.discardedCount,
                 lastUpdatedAtEpochMs = updatedAt,
-                errorMessage = null,
+                errorMessage = failures.takeIf { it.isNotEmpty() }?.let { "部分订阅更新失败，已保留可用规则：${it.joinToString("；")}" },
+                rulesRevision = mutableState.value.rulesRevision + 1,
             )
         }
 
         outcome.onFailure { error ->
+            if (error is CancellationException) {
+                mutableState.value = mutableState.value.copy(isUpdating = false)
+                throw error
+            }
             mutableState.value = mutableState.value.copy(
                 isUpdating = false,
                 errorMessage = "规则更新失败: ${error.message ?: error::class.simpleName.orEmpty()}",
@@ -190,9 +221,29 @@ class AdBlockRepository(
                 adBlockConfigurationNeedsUpdate = configurationNeedsUpdate,
             )
         }
+        val preferences = preferencesRepository.values.first()
+        // Legacy snapshots lack source attribution; retain them until a successful refresh.
+        if (preferences.subscriptionRuleSources.isNotEmpty() || preferences.compiledFilters.isEmpty()) {
+            val rules = withContext(ruleDispatcher) { restoreRules(preferences, subscriptions) }
+            compiledRules.set(rules)
+            mutableState.value = mutableState.value.copy(
+                sourceRulesCount = rules.sourceCount,
+                convertedRulesCount = rules.convertedCount,
+                discardedRulesCount = rules.discardedCount,
+                rulesRevision = mutableState.value.rulesRevision + 1,
+            )
+        }
     }
 
-    private fun restoreRules(preferences: AppPreferences): CompiledRuleSet {
+    private fun restoreRules(preferences: AppPreferences, subscriptions: List<AdBlockSubscription>): CompiledRuleSet {
+        if (preferences.subscriptionRuleSources.isNotEmpty()) {
+            val enabledUrls = subscriptions.filter { it.enabled }.map { it.url }.toSet()
+            return compiler.compile(preferences.subscriptionRuleSources.asSequence()
+                .filter { it.key in enabledUrls }.flatMap { it.value.lineSequence() })
+        }
+        if (preferences.compiledFilters.isEmpty() && subscriptions.any { it.builtIn && it.enabled }) {
+            return compiler.compile(BASELINE_RULES.lineSequence())
+        }
         val validPatterns = preferences.compiledFilters.filter { pattern ->
             runCatching { Regex(pattern) }.isSuccess
         }
@@ -261,6 +312,14 @@ class AdBlockRepository(
         )
 
         private val EMPTY_RULES = CompiledRuleSet(emptyList(), 0, 0, 0)
+        // Conservative offline fallback; replaced by downloaded subscriptions.
+        private val BASELINE_RULES = """
+            ||doubleclick.net^
+            ||googlesyndication.com^
+            ||adservice.google.com^
+            ||ads.adnxs.com^
+            ||ads.pubmatic.com^
+        """.trimIndent()
         private const val USER_AGENT_HEADER = "User-Agent"
         private const val USER_AGENT_VALUE = "SniffSubPlayer/1.1 Android"
     }

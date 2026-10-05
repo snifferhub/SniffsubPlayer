@@ -200,7 +200,7 @@ private fun SniffSubPlayerApp(
                                     val current = container.adBlockRepository.state.value
                                     if (
                                         enabled &&
-                                        current.convertedRulesCount == 0 &&
+                                        (current.convertedRulesCount == 0 || current.lastUpdatedAtEpochMs == null || current.configurationNeedsUpdate) &&
                                         current.subscriptions.any { it.enabled }
                                     ) {
                                         container.adBlockRepository.refresh().getOrThrow()

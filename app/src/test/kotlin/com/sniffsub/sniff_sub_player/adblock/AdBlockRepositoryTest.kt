@@ -34,7 +34,7 @@ class AdBlockRepositoryTest {
 
         assertTrue(repository.refresh().isFailure)
         assertTrue(repository.blocks("https://ads.example/a"))
-        assertEquals("规则更新失败: offline", repository.state.value.errorMessage)
+        assertTrue(repository.state.value.errorMessage.orEmpty().contains("offline"))
     }
 
     @Test
@@ -112,12 +112,12 @@ class AdBlockRepositoryTest {
     }
 
     @Test
-    fun refresh_persists_rules_only_after_every_subscription_succeeds() = runTest {
+    fun partial_refresh_applies_successful_sources_and_reports_failures() = runTest {
         val preferences = FakePreferencesRepository(
             AppPreferences(
                 adBlockEnabled = true,
                 automaticUpdatesEnabled = false,
-                subscriptions = listOf(subscription("one"), subscription("two")),
+                subscriptions = subscriptionsWithOnly(subscription("one")) + subscription("two"),
                 compiledFilters = listOf("old\\.example"),
                 sourceRulesCount = 1,
                 convertedRulesCount = 1,
@@ -132,11 +132,12 @@ class AdBlockRepositoryTest {
         )
         repository.restore()
 
-        assertTrue(repository.refresh().isFailure)
+        assertTrue(repository.refresh().isSuccess)
 
-        assertEquals(listOf("old\\.example"), preferences.current.compiledFilters)
-        assertTrue(repository.blocks("https://old.example/banner"))
-        assertFalse(repository.blocks("https://new.example/banner"))
+        assertTrue(repository.blocks("https://new.example/banner"))
+        assertTrue(repository.state.value.configurationNeedsUpdate)
+        assertTrue(repository.state.value.errorMessage.orEmpty().contains("second source unavailable"))
+        assertEquals("new.example", preferences.current.subscriptionRuleSources["https://filters.example/one.txt"])
     }
 
     @Test
@@ -161,7 +162,7 @@ class AdBlockRepositoryTest {
         assertTrue(repository.refresh().isSuccess)
 
         assertEquals(updatesBeforeRefresh + 1, preferences.updateCount)
-        assertEquals(listOf("ads\\.example"), preferences.current.compiledFilters)
+        assertEquals("! metadata\nads.example\nads.example", preferences.current.subscriptionRuleSources.values.single())
         assertEquals(3, preferences.current.sourceRulesCount)
         assertEquals(1, preferences.current.convertedRulesCount)
         assertEquals(1, preferences.current.discardedRulesCount)
@@ -302,10 +303,74 @@ class AdBlockRepositoryTest {
         val refresh = launch { repository.refresh() }
         testScheduler.runCurrent()
         assertFalse(refresh.isCompleted)
-        ruleDispatcher.runAll()
-        testScheduler.advanceUntilIdle()
+        repeat(3) {
+            ruleDispatcher.runAll()
+            testScheduler.advanceUntilIdle()
+        }
         assertTrue(refresh.isCompleted)
         assertTrue(repository.blocks("https://new.example/banner"))
+    }
+
+    @Test
+    fun failed_source_retains_cached_rules_while_other_sources_update() = runTest {
+        val preferences = FakePreferencesRepository(AppPreferences(
+            adBlockEnabled = true,
+            automaticUpdatesEnabled = false,
+            subscriptions = subscriptionsWithOnly(subscription("one")) + subscription("two"),
+            subscriptionRuleSources = mapOf("https://filters.example/two.txt" to "||cached.example^"),
+        ))
+        val repository = AdBlockRepository(preferences, FakeHttpFetcher(
+            responses = listOf("||new.example^".encodeToByteArray()), failure = IOException("offline"),
+        ))
+        repository.restore()
+        assertTrue(repository.refresh().isSuccess)
+        assertTrue(repository.blocks("https://cached.example/a"))
+        assertTrue(repository.blocks("https://new.example/a"))
+        val restored = AdBlockRepository(preferences, FakeHttpFetcher())
+        restored.restore()
+        assertTrue(restored.blocks("https://cached.example/a"))
+    }
+
+    @Test
+    fun offline_first_launch_has_baseline_and_does_not_block_video_host() = runTest {
+        val repository = repositoryWith(CompiledRuleSet(emptyList(), 0, 0, 0),
+            adBlockEnabled = true, automaticUpdatesEnabled = false)
+        repository.restore()
+        assertTrue(repository.blocks("https://ads.doubleclick.net/banner"))
+        assertFalse(repository.blocks("https://video.googlevideo.com/video.mp4"))
+    }
+
+    @Test
+    fun cached_cosmetic_rules_restore_and_disabled_subscriptions_are_not_applied() = runTest {
+        val preferences = FakePreferencesRepository(AppPreferences(
+            adBlockEnabled = true, automaticUpdatesEnabled = false,
+            subscriptions = subscriptionsWithOnly(subscription("one")),
+            subscriptionRuleSources = mapOf("https://filters.example/one.txt" to "##.ad\n@@||news.example^\$elemhide"),
+        ))
+        val repository = AdBlockRepository(preferences, FakeHttpFetcher())
+        repository.restore()
+        assertEquals(listOf(".ad"), repository.selectors("https://other.example"))
+        assertEquals(emptyList<String>(), repository.selectors("https://news.example"))
+        repository.setEnabled(false)
+        assertEquals(emptyList<String>(), repository.selectors("https://other.example"))
+        repository.setEnabled(true)
+        repository.setSubscriptionEnabled("one", false)
+        assertEquals(emptyList<String>(), repository.selectors("https://other.example"))
+        val restored = AdBlockRepository(preferences, FakeHttpFetcher())
+        restored.restore()
+        restored.setEnabled(true)
+        assertEquals(emptyList<String>(), restored.selectors("https://other.example"))
+    }
+
+    @Test
+    fun html_download_keeps_previous_rules_and_reports_invalid_subscription() = runTest {
+        val repository = repositoryWith(CompiledRuleSet(listOf("old"), 1, 1, 0),
+            fetcher = FakeHttpFetcher(responses = listOf("<html>error</html>".encodeToByteArray())),
+            subscriptions = subscriptionsWithOnly(subscription("one")),
+            adBlockEnabled = true, automaticUpdatesEnabled = false)
+        repository.restore()
+        assertTrue(repository.refresh().isFailure)
+        assertTrue(repository.blocks("https://old.example/a"))
     }
 
     private fun repositoryWith(

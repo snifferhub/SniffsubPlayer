@@ -28,14 +28,11 @@
 
 ```sh
 ./gradlew testDebugUnitTest
-./gradlew assembleDebug
+./gradlew lintDebug
+node --test app/src/test/js/cosmetic-filtering.test.cjs
 ```
 
-常用构建命令：
-
-```sh
-./gradlew assembleRelease
-```
+APK 编译、签名和发布通过 GitHub Actions 完成，不在本地组装 APK。
 
 ## 自动发布
 
@@ -43,11 +40,11 @@
 
 1. 使用 Gradle 构建原生 Compose Android APK。
 2. 生成 `arm64-v8a` APK；当前应用配置不包含 x86。
-3. 创建 `v<版本>-build.<运行编号>` GitHub Release，并附带 SHA-256 校验文件。
+3. 创建 `android-v<版本>-build.<运行编号>` GitHub Release，并附带 SHA-256 校验文件。
 
 流水线只负责编译和发布，不运行自动化测试；真机功能由维护者自行验证。
 
-未配置 Android 正式签名时，流水线会回退到调试签名，适合内部安装测试。正式发布前，在 GitHub 仓库的 Actions Secrets 中配置：
+流水线要求配置正式签名。请在 GitHub 仓库的 Actions Secrets 中配置：
 
 - `ANDROID_KEYSTORE_BASE64`
 - `ANDROID_KEYSTORE_PASSWORD`
@@ -60,5 +57,7 @@
 
 - `blob:` URL 不能离开原网页直接播放，应优先选择对应的 M3U8 或 MP4 候选。
 - 需要 Cookie、DRM 或站点专用签名的媒体可能无法直接播放。
-- 广告过滤当前处理跨平台 WebView 可执行的网络规则；CSS 元素隐藏、脚本规则、例外规则和部分高级修饰符会跳过。
+- 广告过滤支持 URL/域名/路径规则、通配符与锚定、例外、资源类型、`domain`、`third-party`、`match-case`、`important`，以及普通 CSS 元素隐藏及其例外。脚本规则、重定向规则与扩展 CSS 等未支持的语法仍会跳过，避免错误扩大拦截范围。
+- WebView 不提供完整的请求类型信息：优先使用请求头，再使用扩展名推断；无法判断的请求作为 `other` 处理，不套用特定类型规则。CSS 隐藏应用于主文档，动态新增的匹配元素也会隐藏，但不覆盖独立跨域 iframe 内部。
+- 规则按订阅分别缓存；部分下载失败不会丢弃其他来源的新规则，失败来源保留缓存。开启内置订阅且没有缓存时提供少量离线广告域名规则。升级后会重新下载以迁移旧的正则快照；自动更新关闭时，请手动“立即更新规则”。
 - Subtitlecat 下载的字幕文件仍需通过“字幕文件”导入。

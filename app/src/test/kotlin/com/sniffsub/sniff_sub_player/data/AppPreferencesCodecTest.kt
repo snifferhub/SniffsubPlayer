@@ -35,6 +35,7 @@ class AppPreferencesCodecTest {
                 ),
             ),
             compiledFilters = listOf("||ads.example.test^"),
+            subscriptionRuleSources = mapOf("https://example.test/filters.txt" to "##.ad\n@@||player.example^"),
             sourceRulesCount = 12,
             convertedRulesCount = 10,
             discardedRulesCount = 2,
