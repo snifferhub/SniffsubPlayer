@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,8 +56,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -91,7 +93,7 @@ fun BrowserScreen(
     var addressFocused by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
-    val focusManager = LocalFocusManager.current
+    val browserFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val currentUrl = state.currentPageUrl.ifBlank { state.address }.trim()
     val isBookmarked = state.bookmarks.any { it.url == currentUrl }
@@ -111,13 +113,13 @@ fun BrowserScreen(
 
     fun submitAddress() {
         actions.onSubmitAddress(addressText)
-        focusManager.clearFocus()
+        browserFocusRequester.requestFocus()
         keyboardController?.hide()
     }
 
     BackHandler(enabled = isActive && (addressFocused || state.canGoBack)) {
         if (addressFocused) {
-            focusManager.clearFocus()
+            browserFocusRequester.requestFocus()
             keyboardController?.hide()
         } else {
             actions.onBack()
@@ -191,7 +193,7 @@ fun BrowserScreen(
                     }
                     IconButton(
                         onClick = {
-                            focusManager.clearFocus()
+                            browserFocusRequester.requestFocus()
                             keyboardController?.hide()
                             actions.onOpenSettings()
                         },
@@ -225,6 +227,8 @@ fun BrowserScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .focusRequester(browserFocusRequester)
+                    .focusable()
                     .testTag("browser_webview"),
             ) {
                 webViewContent()

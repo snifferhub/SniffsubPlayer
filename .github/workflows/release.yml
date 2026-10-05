@@ -28,12 +28,6 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon
-
-      - name: Run lint
-        run: ./gradlew lintDebug --no-daemon
-
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 

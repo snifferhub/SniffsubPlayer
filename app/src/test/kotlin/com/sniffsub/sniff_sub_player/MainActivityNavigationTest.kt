@@ -3,8 +3,10 @@ package com.sniffsub.sniff_sub_player
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,7 +31,10 @@ class MainActivityNavigationTest {
     @Test
     fun system_back_returns_from_nested_settings_then_browser() {
         compose.onNodeWithTag("settings_button").performClick()
-        compose.onNodeWithTag("bookmarks_row").performClick()
+        compose.onNodeWithTag("bookmarks_row").performScrollTo().performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithTag("user_agent_row").fetchSemanticsNodes().isEmpty()
+        }
         compose.onNodeWithTag("user_agent_row").assertDoesNotExist()
         pressBack()
         compose.onNodeWithTag("user_agent_row").assertExists()
