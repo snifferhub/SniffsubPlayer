@@ -6,12 +6,14 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 
 data class SnifferPayload(
     val url: String,
     val source: String,
     val pageUrl: String,
     val userAgent: String,
+    val sessionId: Long? = null,
 )
 
 fun parseSnifferPayload(json: String): SnifferPayload? {
@@ -26,6 +28,7 @@ fun parseSnifferPayload(json: String): SnifferPayload? {
         source = body.string("source").trim().ifEmpty { "unknown" },
         pageUrl = sanitizePageUrl(body.string("pageURL").ifEmpty { body.string("pageUrl") }),
         userAgent = sanitizeHeaderValue(body.string("userAgent")),
+        sessionId = (body["sessionId"] as? JsonPrimitive)?.longOrNull,
     )
 }
 

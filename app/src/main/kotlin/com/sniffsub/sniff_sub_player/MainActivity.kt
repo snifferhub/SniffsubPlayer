@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -27,21 +28,25 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.sniffsub.sniff_sub_player.ui.components.GlassNavigationBar
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -51,6 +56,7 @@ import com.sniffsub.sniff_sub_player.browser.BrowserScreen
 import com.sniffsub.sniff_sub_player.browser.BrowserViewModel
 import com.sniffsub.sniff_sub_player.browser.BrowserWebView
 import com.sniffsub.sniff_sub_player.browser.MediaCandidate
+import com.sniffsub.sniff_sub_player.browser.MediaKind
 import com.sniffsub.sniff_sub_player.browser.rememberBrowserWebViewController
 import com.sniffsub.sniff_sub_player.data.AppPreferences
 import com.sniffsub.sniff_sub_player.player.PlayerScreen
@@ -74,6 +80,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
             SniffSubPlayerTheme {
                 SniffSubPlayerApp(
@@ -114,18 +121,24 @@ private fun SniffSubPlayerApp(
         drawRect(backgroundColor)
         drawContent()
     }
-    // WebView has its own render/gesture pipeline. Never record it into a Compose layer.
-    val browserBackdrop = rememberCanvasBackdrop {
+    // Record a bounded bitmap of the webpage, not the native WebView's render node.
+    val browserBackdrop = rememberLayerBackdrop {
         drawRect(backgroundColor)
-        drawRect(Brush.verticalGradient(listOf(
-            androidx.compose.ui.graphics.Color(0xFF0088FF).copy(alpha = 0.08f),
-            backgroundColor,
-        )))
+        drawContent()
     }
-    var selectedCandidate by remember { mutableStateOf<MediaCandidate?>(null) }
+    var selectedCandidate by rememberSaveable(stateSaver = listSaver<MediaCandidate?, Any>(
+        save = { candidate -> candidate?.let {
+            listOf(it.url, it.kind.name, it.source, it.pageUrl, it.referer, it.userAgent, it.detectedAtEpochMs)
+        } ?: emptyList() },
+        restore = { if (it.isEmpty()) null else MediaCandidate(
+            it[0] as String, MediaKind.valueOf(it[1] as String), it[2] as String,
+            it[3] as String, it[4] as String, it[5] as String, it[6] as Long,
+        ) },
+    )) { mutableStateOf<MediaCandidate?>(null) }
 
     LaunchedEffect(currentRoute) {
         if (currentRoute != SETTINGS_ROUTE) showUpdateDialog = false
+        if (currentRoute != BROWSER_ROUTE) browserViewModel.stopSniff()
     }
 
     LaunchedEffect(container.adBlockRepository, actionExecutor) {
@@ -135,10 +148,14 @@ private fun SniffSubPlayerApp(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize().layerBackdrop(browserBackdrop)) {
+            webViewController.glassCapture.frame?.let {
+                drawImage(it.image, dstOffset = it.origin, dstSize = it.size)
+            }
+        }
         Box(Modifier.fillMaxSize()) {
             BrowserScreen(
                 modifier = Modifier
-                    .graphicsLayer { alpha = if (currentRoute == BROWSER_ROUTE) 1f else 0f }
                     .then(if (currentRoute == BROWSER_ROUTE) Modifier else Modifier.clearAndSetSemantics {}),
                 state = browserState,
                 isActive = currentRoute == BROWSER_ROUTE,
@@ -147,6 +164,10 @@ private fun SniffSubPlayerApp(
                     onToggleBookmark = browserViewModel::toggleBookmark,
                     onBack = webViewController::goBack,
                     onForward = webViewController::goForward,
+                    onReload = {
+                        browserViewModel.prepareReload()
+                        webViewController.reload()
+                    },
                     onSubmitAddress = { input ->
                         browserViewModel.submitAddress(input)?.let(webViewController::loadUrl)
                     },
@@ -166,6 +187,7 @@ private fun SniffSubPlayerApp(
                         adBlockRepository = container.adBlockRepository,
                         controller = webViewController,
                         isActive = currentRoute == BROWSER_ROUTE,
+                        captureGlass = !keyboardVisible && !browserState.candidateSheetVisible,
                         modifier = Modifier.fillMaxSize(),
                     )
                 },
@@ -298,7 +320,13 @@ private fun SniffSubPlayerApp(
                         )
                     }
                 }
-                composable(PLAYER_ROUTE) {
+                composable(
+                    PLAYER_ROUTE,
+                    enterTransition = { EnterTransition.None },
+                    exitTransition = { ExitTransition.None },
+                    popEnterTransition = { EnterTransition.None },
+                    popExitTransition = { ExitTransition.None },
+                ) {
                     val candidate = selectedCandidate
                     if (candidate == null) {
                         LaunchedEffect(Unit) { navController.popBackStack() }
@@ -307,7 +335,6 @@ private fun SniffSubPlayerApp(
                             candidate = candidate,
                             subtitleRepository = container.subtitleRepository,
                             onBack = {
-                                selectedCandidate = null
                                 navController.popBackStack()
                             },
                         )
@@ -325,6 +352,7 @@ private fun SniffSubPlayerApp(
         ) {
             GlassNavigationBar(
                 backdrop = if (currentRoute == BROWSER_ROUTE) browserBackdrop else backdrop,
+                darkBackdrop = if (currentRoute == BROWSER_ROUTE) webViewController.glassCapture.isDark else null,
                 browserSelected = currentRoute == BROWSER_ROUTE,
                 sniffEnabled = currentRoute == BROWSER_ROUTE && !browserState.loading &&
                     browserState.currentPageUrl.ifBlank { browserState.address }.isNotBlank(),
@@ -385,6 +413,12 @@ private class BrowserViewModelFactory(
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(BrowserViewModel::class.java))
         return BrowserViewModel(container.preferencesRepository) as T
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
+        require(modelClass.isAssignableFrom(BrowserViewModel::class.java))
+        return BrowserViewModel(container.preferencesRepository, savedStateHandle = extras.createSavedStateHandle()) as T
     }
 }
 

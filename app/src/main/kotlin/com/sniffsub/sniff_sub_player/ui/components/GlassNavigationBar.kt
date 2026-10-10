@@ -61,9 +61,19 @@ fun GlassNavigationBar(
     onSettings: () -> Unit,
     onSniff: () -> Unit,
     modifier: Modifier = Modifier,
+    darkBackdrop: Boolean? = null,
 ) {
-    val surface = MaterialTheme.colorScheme.surface
-    val glassTint = surface.copy(alpha = if (Build.VERSION.SDK_INT >= 31) 0.62f else 0.94f)
+    val surface = when (darkBackdrop) {
+        true -> Color.Black
+        false -> Color.White
+        null -> MaterialTheme.colorScheme.surface
+    }
+    val unselectedTint = when (darkBackdrop) {
+        true -> Color.White
+        false -> Color(0xFF292B30)
+        null -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val glassTint = surface.copy(alpha = if (Build.VERSION.SDK_INT >= 31) 0.16f else 0.30f)
     Row(
         modifier = modifier.height(64.dp).testTag("bottom_navigation"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -78,7 +88,7 @@ fun GlassNavigationBar(
                     shape = { CircleShape },
                     effects = {
                         vibrancy()
-                        blur(6.dp.toPx())
+                        blur(10.dp.toPx())
                         lens(16.dp.toPx(), 24.dp.toPx())
                     },
                     onDrawSurface = { drawRect(glassTint) },
@@ -100,10 +110,12 @@ fun GlassNavigationBar(
             Row(Modifier.fillMaxSize()) {
                 GlassTab(
                     label = "浏览器", icon = Icons.Default.Language, selected = browserSelected,
+                    unselectedTint = unselectedTint,
                     onClick = onBrowser, modifier = Modifier.weight(1f).testTag("browser_tab"),
                 )
                 GlassTab(
                     label = "设置", icon = Icons.Default.Settings, selected = !browserSelected,
+                    unselectedTint = unselectedTint,
                     onClick = onSettings, modifier = Modifier.weight(1f).testTag("settings_tab"),
                 )
             }
@@ -133,7 +145,7 @@ fun GlassNavigationBar(
                         lens(16.dp.toPx(), 24.dp.toPx())
                     },
                     onDrawSurface = {
-                        drawRect(SniffBlue.copy(alpha = if (sniffEnabled) 0.88f else 0.45f))
+                        drawRect(SniffBlue.copy(alpha = if (sniffEnabled) 0.65f else 0.30f))
                         drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.14f), Color.Transparent)))
                     },
                 )
@@ -156,9 +168,10 @@ private fun GlassTab(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier,
+    unselectedTint: Color,
 ) {
     val tint by animateColorAsState(
-        targetValue = if (selected) SniffBlue else MaterialTheme.colorScheme.onSurfaceVariant,
+        targetValue = if (selected) SniffBlue else unselectedTint,
         label = "glassTabTint",
     )
     Column(

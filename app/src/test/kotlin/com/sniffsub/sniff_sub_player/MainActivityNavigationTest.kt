@@ -11,6 +11,9 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.lifecycle.ViewModelProvider
+import com.sniffsub.sniff_sub_player.browser.BrowserViewModel
 import org.junit.Rule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -79,6 +82,46 @@ class MainActivityNavigationTest {
         compose.onNodeWithTag("user_agent_row").assertExists()
         compose.onNodeWithTag("browser_tab").performClick()
         compose.onNodeWithTag("address_field").performClick().assertIsFocused()
+    }
+
+    @Test
+    fun closing_player_restores_chrome_and_same_visible_webview_repeatedly() {
+        val original = findWebView(compose.activity.window.decorView)
+        val model = ViewModelProvider(compose.activity)[BrowserViewModel::class.java]
+        repeat(3) { index ->
+            compose.runOnIdle {
+                model.updatePage("https://page.test/watch")
+                model.setLoading(false)
+                model.requestSniff()
+                val session = model.uiState.value.sniffRequestRevision
+                model.acceptSnifferPayload(
+                    """{"url":"https://cdn.test/test-$index.mp4","pageUrl":"https://page.test/watch","sessionId":$session}""",
+                )
+            }
+            compose.onNodeWithTag("candidate_0").performClick()
+            compose.onNodeWithContentDescription("关闭播放器").assertExists().performClick()
+            compose.onNodeWithTag("address_field").assertExists()
+            compose.onNodeWithTag("bottom_navigation").assertExists()
+            compose.onNodeWithTag("browser_tab").assertIsSelected()
+            compose.runOnIdle {
+                assertSame(original, findWebView(compose.activity.window.decorView))
+                assertEquals(View.VISIBLE, original.visibility)
+            }
+        }
+    }
+
+    @Test
+    fun recreation_keeps_address_and_restores_visible_browser_chrome() {
+        compose.runOnIdle {
+            ViewModelProvider(compose.activity)[BrowserViewModel::class.java].submitAddress("https://page.test/restored")
+        }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("address_field").assertExists()
+        compose.onNodeWithTag("bottom_navigation").assertExists()
+        compose.runOnIdle {
+            assertEquals(View.VISIBLE, findWebView(compose.activity.window.decorView).visibility)
+            assertEquals("https://page.test/restored", ViewModelProvider(compose.activity)[BrowserViewModel::class.java].uiState.value.address)
+        }
     }
 
     private fun pressBack() {

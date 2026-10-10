@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
@@ -41,6 +40,7 @@ import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Waves
+import androidx.compose.material.icons.filled.Refresh
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -69,7 +69,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -90,6 +89,7 @@ data class BrowserActions(
     val onClearCandidates: () -> Unit,
     val onOpenCandidate: (MediaCandidate) -> Unit,
     val onConsumeTransientMessage: () -> Unit,
+    val onReload: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -108,7 +108,6 @@ fun BrowserScreen(
     val snackbarScope = rememberCoroutineScope()
     val browserFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val currentUrl = state.currentPageUrl.ifBlank { state.address }.trim()
     val isBookmarked = state.bookmarks.any { it.url == currentUrl }
 
@@ -142,6 +141,7 @@ fun BrowserScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             Surface {
                 Row(
@@ -189,11 +189,21 @@ fun BrowserScreen(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(onGo = { submitAddress() }),
                         trailingIcon = {
-                            IconButton(
-                                onClick = ::submitAddress,
-                                modifier = Modifier.testTag("submit_address_button"),
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前往")
+                            if (addressFocused) {
+                                IconButton(
+                                    onClick = ::submitAddress,
+                                    modifier = Modifier.testTag("submit_address_button"),
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前往")
+                                }
+                            } else {
+                                IconButton(
+                                    onClick = actions.onReload,
+                                    enabled = currentUrl.isNotEmpty(),
+                                    modifier = Modifier.testTag("reload_button"),
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = "刷新网页")
+                                }
                             }
                         },
                     )
@@ -239,8 +249,6 @@ fun BrowserScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    // Keep native hit targets out from underneath the Compose dock.
-                    .padding(bottom = if (keyboardVisible) 0.dp else 88.dp)
                     .focusRequester(browserFocusRequester)
                     .focusable()
                     .testTag("browser_webview"),
@@ -288,7 +296,8 @@ private fun CandidateSheet(
                 Column(Modifier.weight(1f)) {
                     Text("媒体资源", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "发现 ${state.candidates.size} 个资源 · 点击即可播放",
+                        if (state.snifferEnabled) "正在扫描当前网页 · 已发现 ${state.candidates.size} 个资源"
+                        else "扫描已结束 · 发现 ${state.candidates.size} 个资源",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -328,7 +337,7 @@ private fun CandidateSheet(
                     Text("暂未发现媒体资源", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "返回网页播放视频，再点击蓝色按钮。嗅探会继续收集当前页面的媒体资源。",
+                        "返回网页播放视频，再点击蓝色按钮。每次只扫描当前网页 8 秒，换页后自动清空。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

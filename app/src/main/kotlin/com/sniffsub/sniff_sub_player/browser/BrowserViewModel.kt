@@ -1,6 +1,7 @@
 package com.sniffsub.sniff_sub_player.browser
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.sniffsub.sniff_sub_player.data.AppPreferences
 import com.sniffsub.sniff_sub_player.data.AppPreferencesRepository
@@ -13,6 +14,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+
+internal const val SNIFF_WINDOW_MS = 8_000L
 
 data class BrowserUiState(
     val address: String = "",
@@ -49,7 +54,10 @@ sealed interface BrowserEvent {
 }
 
 fun reduceBrowserEvent(state: BrowserUiState, event: BrowserEvent): BrowserUiState = when (event) {
-    is BrowserEvent.AddressSubmitted -> state.copy(address = event.address)
+    is BrowserEvent.AddressSubmitted -> state.copy(
+        address = event.address, snifferEnabled = false, candidates = emptyList(),
+        candidateSheetVisible = false, sniffRequestRevision = state.sniffRequestRevision + 1,
+    )
     is BrowserEvent.PageStarted -> {
         val url = event.url.trim()
         state.copy(
@@ -58,6 +66,7 @@ fun reduceBrowserEvent(state: BrowserUiState, event: BrowserEvent): BrowserUiSta
             loading = true,
             progress = 0.05,
             snifferEnabled = false,
+            sniffRequestRevision = state.sniffRequestRevision + 1,
             candidateSheetVisible = false,
             candidates = emptyList(),
             transientMessage = null,
@@ -65,10 +74,15 @@ fun reduceBrowserEvent(state: BrowserUiState, event: BrowserEvent): BrowserUiSta
     }
     is BrowserEvent.PageUpdated -> {
         val url = event.url?.trim().orEmpty()
+        val changed = url.isNotEmpty() && url != state.currentPageUrl
         state.copy(
             address = url.ifEmpty { state.address },
             currentPageUrl = url.ifEmpty { state.currentPageUrl },
             title = event.title ?: state.title,
+            snifferEnabled = if (changed) false else state.snifferEnabled,
+            sniffRequestRevision = state.sniffRequestRevision + if (changed) 1 else 0,
+            candidates = if (changed) emptyList() else state.candidates,
+            candidateSheetVisible = if (changed) false else state.candidateSheetVisible,
         )
     }
     is BrowserEvent.LoadingChanged -> state.copy(
@@ -114,8 +128,13 @@ class BrowserViewModel(
     private val preferencesRepository: AppPreferencesRepository,
     private val candidateAccumulator: CandidateAccumulator = CandidateAccumulator(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
-    private val mutableUiState = MutableStateFlow(BrowserUiState())
+    private val mutableUiState = MutableStateFlow(BrowserUiState(
+        address = savedStateHandle.get<String>("pageUrl").orEmpty(),
+        currentPageUrl = savedStateHandle.get<String>("pageUrl").orEmpty(),
+    ))
+    private var sniffTimeout: Job? = null
     val uiState: StateFlow<BrowserUiState> = mutableUiState.asStateFlow()
 
     init {
@@ -128,7 +147,10 @@ class BrowserViewModel(
 
     fun submitAddress(input: String): String? {
         val normalized = normalizeAddress(input) ?: return null
+        stopSniff()
+        candidateAccumulator.clear()
         candidateAccumulator.currentPageUrl = normalized
+        savedStateHandle["pageUrl"] = normalized
         dispatch(BrowserEvent.AddressSubmitted(normalized))
         return normalized
     }
@@ -139,7 +161,14 @@ class BrowserViewModel(
         started: Boolean = false,
     ) {
         val normalizedUrl = url?.trim().orEmpty()
-        if (normalizedUrl.isNotEmpty()) candidateAccumulator.currentPageUrl = normalizedUrl
+        if (started || (normalizedUrl.isNotEmpty() && normalizedUrl != mutableUiState.value.currentPageUrl)) {
+            stopSniff()
+            candidateAccumulator.clear()
+        }
+        if (normalizedUrl.isNotEmpty()) {
+            candidateAccumulator.currentPageUrl = normalizedUrl
+            savedStateHandle["pageUrl"] = normalizedUrl
+        }
         if (started) {
             candidateAccumulator.clear()
             dispatch(BrowserEvent.PageStarted(normalizedUrl))
@@ -161,7 +190,20 @@ class BrowserViewModel(
     }
 
     fun enableSniffer(enabled: Boolean = true) {
+        sniffTimeout?.cancel()
         dispatch(BrowserEvent.SnifferChanged(enabled))
+        if (enabled) {
+            sniffTimeout = viewModelScope.launch {
+                delay(SNIFF_WINDOW_MS)
+                dispatch(BrowserEvent.SnifferChanged(false))
+            }
+        }
+    }
+
+    fun stopSniff() = enableSniffer(false)
+
+    fun prepareReload() {
+        updatePage(mutableUiState.value.currentPageUrl.ifBlank { mutableUiState.value.address }, started = true)
     }
 
     fun requestSniff() {
@@ -179,7 +221,7 @@ class BrowserViewModel(
         val state = mutableUiState.value
         if (!state.snifferEnabled) return false
         val payload = parseSnifferPayload(json) ?: return false
-        if (payload.pageUrl.isNotBlank() && payload.pageUrl != state.currentPageUrl) return false
+        if (payload.pageUrl != state.currentPageUrl || payload.sessionId != state.sniffRequestRevision) return false
         val added = candidateAccumulator.add(
             url = payload.url,
             source = payload.source,
@@ -232,6 +274,7 @@ class BrowserViewModel(
     }
 
     fun handleRendererGone() {
+        stopSniff()
         candidateAccumulator.clear()
         dispatch(BrowserEvent.RendererGone)
     }

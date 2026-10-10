@@ -85,6 +85,22 @@ class BrowserScreenTest {
     }
 
     @Test
+    fun reload_button_dispatches_refresh_and_is_disabled_without_a_page() {
+        var refreshed = 0
+        compose.setContent {
+            BrowserScreen(state = sampleState(), actions = noOpActions().copy(onReload = { refreshed++ }))
+        }
+        compose.onNodeWithTag("reload_button").assertIsEnabled().performClick()
+        assertEquals(1, refreshed)
+    }
+
+    @Test
+    fun empty_page_cannot_refresh() {
+        compose.setContent { BrowserScreen(state = BrowserUiState(), actions = noOpActions()) }
+        compose.onNodeWithTag("reload_button").assertIsNotEnabled()
+    }
+
+    @Test
     fun sheet_loading_disables_rescan_and_empty_candidates_disable_clear() {
         compose.setContent {
             BrowserScreen(

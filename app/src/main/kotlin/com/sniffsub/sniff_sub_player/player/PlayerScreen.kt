@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.view.LayoutInflater
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -67,7 +68,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.sniffsub.sniff_sub_player.browser.MediaCandidate
+import com.sniffsub.sniff_sub_player.R
 import com.sniffsub.sniff_sub_player.subtitle.SubtitleCue
 import com.sniffsub.sniff_sub_player.subtitle.SubtitleRepository
 import com.sniffsub.sniff_sub_player.subtitle.SubtitleSearchScreen
@@ -87,6 +92,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     var showSubtitleSearch by remember { mutableStateOf(false) }
     var cues by remember { mutableStateOf<List<SubtitleCue>>(emptyList()) }
     var currentSubtitle by remember { mutableStateOf("") }
@@ -103,6 +109,7 @@ fun PlayerScreen(
     val player = remember(candidate.url, candidate.referer, candidate.userAgent) {
         createPlayer(context, candidate)
     }
+    val attachedView = remember(player) { arrayOfNulls<PlayerView>(1) }
 
     fun keepControlsVisible() {
         controlsVisible = true
@@ -118,8 +125,16 @@ fun PlayerScreen(
         keepControlsVisible()
     }
 
+    fun exitPlayback() {
+        attachedView[0]?.player = null
+        attachedView[0]?.keepScreenOn = false
+        player.pause()
+        player.clearVideoSurface()
+        onBack()
+    }
+
     BackHandler {
-        if (showSubtitleSearch) showSubtitleSearch = false else onBack()
+        if (showSubtitleSearch) showSubtitleSearch = false else exitPlayback()
     }
 
     DisposableEffect(activity) {
@@ -138,12 +153,34 @@ fun PlayerScreen(
         onDispose {
             if (previousOrientation != null) activity?.requestedOrientation = previousOrientation
             insetsController?.show(WindowInsetsCompat.Type.systemBars())
-            if (window != null) WindowCompat.setDecorFitsSystemWindows(window, true)
         }
     }
 
     DisposableEffect(player) {
-        onDispose { player.release() }
+        onDispose {
+            attachedView[0]?.player = null
+            attachedView[0]?.keepScreenOn = false
+            player.playWhenReady = false
+            player.clearVideoSurface()
+            player.release()
+        }
+    }
+
+    DisposableEffect(player, lifecycle) {
+        var resumePlayback = false
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                resumePlayback = player.playWhenReady
+                player.pause()
+                attachedView[0]?.keepScreenOn = false
+            } else if (event == Lifecycle.Event.ON_RESUME && resumePlayback) {
+                resumePlayback = false
+                attachedView[0]?.keepScreenOn = true
+                player.play()
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(player, cues) {
@@ -195,7 +232,8 @@ fun PlayerScreen(
     ) {
         AndroidView(
             factory = {
-                PlayerView(it).apply {
+                createVideoPlayerView(it).apply {
+                    attachedView[0] = this
                     this.player = player
                     useController = false
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -204,6 +242,12 @@ fun PlayerScreen(
                 }
             },
             update = { it.player = player },
+            onReset = null,
+            onRelease = {
+                it.player = null
+                it.keepScreenOn = false
+                if (attachedView[0] === it) attachedView[0] = null
+            },
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -249,7 +293,7 @@ fun PlayerScreen(
                 durationMs = durationMs,
                 statusText = statusText,
                 hasSubtitles = cues.isNotEmpty(),
-                onClose = onBack,
+                onClose = ::exitPlayback,
                 onSubtitles = {
                     keepControlsVisible()
                     showSubtitleSearch = true
@@ -301,6 +345,10 @@ fun PlayerScreen(
         }
     }
 }
+
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun createVideoPlayerView(context: Context): PlayerView =
+    LayoutInflater.from(context).inflate(R.layout.player_view, null, false) as PlayerView
 
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)

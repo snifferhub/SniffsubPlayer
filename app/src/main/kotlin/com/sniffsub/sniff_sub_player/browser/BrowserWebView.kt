@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.view.View
+import android.view.ViewGroup
+import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
@@ -19,6 +21,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -38,9 +43,27 @@ class BrowserWebViewController internal constructor() {
     private val sniffRequests = WeakHashMap<WebView, Long>()
     private val activeViews = WeakHashMap<WebView, Boolean>()
     private var active = false
+    private var snifferEnabled = false
+    private var captureEnabled = false
+    internal val glassCapture = BrowserGlassCapture()
+    private var visualRequest = 0L
+
+    internal fun setCaptureEnabled(value: Boolean) {
+        captureEnabled = value
+        glassCapture.setEnabled(active && value)
+    }
+
+    internal fun setSnifferEnabled(value: Boolean) {
+        if (snifferEnabled == value) return
+        snifferEnabled = value
+        if (!value) webViewSlot.withAttached { view ->
+            view.evaluateJavascript("if (window.__sniffSubPlayerSetActive) window.__sniffSubPlayerSetActive(false);", null)
+        }
+    }
 
     internal fun setActive(value: Boolean) {
         active = value
+        glassCapture.setEnabled(active && captureEnabled)
         webViewSlot.withAttached(::applyActiveState)
     }
 
@@ -50,19 +73,29 @@ class BrowserWebViewController internal constructor() {
         view.visibility = if (active) View.VISIBLE else View.INVISIBLE
         if (active) {
             view.onResume()
+            view.requestLayout()
+            view.invalidate()
+            // Ask Chromium for a fresh drawable frame after a hidden video/browser surface.
+            view.postVisualStateCallback(++visualRequest, object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    webViewSlot.withAttached { current ->
+                        if (current === view && active) current.postInvalidateOnAnimation()
+                    }
+                }
+            })
         } else {
             view.clearFocus()
             view.onPause()
         }
         // onPause does not stop JS. Suspend only our scanner, not every WebView's timers.
-        view.evaluateJavascript("if (window.__sniffSubPlayerSetActive) window.__sniffSubPlayerSetActive($active);", null)
+        view.evaluateJavascript("if (window.__sniffSubPlayerSetActive) window.__sniffSubPlayerSetActive(${active && snifferEnabled});", null)
+        Log.d("BrowserWebView", "active=$active generationView=${System.identityHashCode(view)}")
     }
 
     internal fun applySnifferScript(view: WebView, revision: Long, script: String) {
         if (sniffRequests[view] == revision) return
         sniffRequests[view] = revision
-        view.evaluateJavascript(script, null)
-        view.evaluateJavascript("if (window.__sniffSubPlayerSetActive) window.__sniffSubPlayerSetActive($active);", null)
+        view.evaluateJavascript("window.__sniffSubPlayerRequest = $revision;\n$script", null)
     }
 
     private val cosmeticScripts = WeakHashMap<WebView, String>()
@@ -89,13 +122,20 @@ class BrowserWebViewController internal constructor() {
         webViewSlot.withAttached(WebView::reload)
     }
 
+    internal fun isAttached(view: WebView): Boolean = webViewSlot.withAttached { it === view } == true
+
     internal fun attach(view: WebView) {
         webViewSlot.attach(view)
+        glassCapture.attach(view)
         applyActiveState(view)
     }
 
-    internal fun release(view: WebView) {
-        webViewSlot.release(view, AndroidBrowserWebViewReleaseOperations)
+    internal fun release(view: WebView, rendererGone: Boolean = false) {
+        glassCapture.detach(view)
+        activeViews.remove(view)
+        sniffRequests.remove(view)
+        cosmeticScripts.remove(view)
+        webViewSlot.release(view, if (rendererGone) DeadBrowserWebViewReleaseOperations else AndroidBrowserWebViewReleaseOperations)
     }
 }
 
@@ -141,8 +181,17 @@ private object AndroidBrowserWebViewReleaseOperations : BrowserWebViewReleaseOpe
     }
 
     override fun destroy(target: WebView) {
+        (target.parent as? ViewGroup)?.removeView(target)
         target.destroy()
     }
+}
+
+// A dead renderer must not receive loading/JavaScript/client operations during cleanup.
+private object DeadBrowserWebViewReleaseOperations : BrowserWebViewReleaseOperations<WebView> {
+    override fun stopLoading(target: WebView) = Unit
+    override fun removeJavascriptBridge(target: WebView) = Unit
+    override fun clearClients(target: WebView) = Unit
+    override fun destroy(target: WebView) = AndroidBrowserWebViewReleaseOperations.destroy(target)
 }
 
 @Composable
@@ -159,10 +208,12 @@ fun BrowserWebView(
     modifier: Modifier = Modifier,
     controller: BrowserWebViewController = rememberBrowserWebViewController(),
     isActive: Boolean = true,
+    captureGlass: Boolean = true,
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(controller, lifecycle, isActive) {
         val observer = LifecycleEventObserver { _, _ ->
+            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) viewModel.stopSniff()
             controller.setActive(isActive && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
         }
         lifecycle.addObserver(observer)
@@ -171,6 +222,10 @@ fun BrowserWebView(
             lifecycle.removeObserver(observer)
             controller.setActive(false)
         }
+    }
+    SideEffect {
+        controller.setCaptureEnabled(captureGlass && isActive)
+        controller.setSnifferEnabled(state.snifferEnabled)
     }
     val adBlockState by adBlockRepository.state.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -187,7 +242,7 @@ fun BrowserWebView(
 
     key(state.webViewGeneration) {
         AndroidView(
-            modifier = modifier,
+            modifier = modifier.onGloballyPositioned { controller.glassCapture.setOrigin(it.positionInRoot()) },
             factory = { factoryContext ->
                 createBrowserWebView(
                     context = factoryContext,
@@ -268,12 +323,15 @@ private fun createBrowserWebView(
 
     webViewClient = object : WebViewClient() {
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+            if (!controller.isAttached(view)) return
+            controller.setSnifferEnabled(false)
             pageUrl.set(url)
             viewModel.updatePage(url = url, started = true)
             viewModel.setNavigation(view.canGoBack(), view.canGoForward())
         }
 
         override fun onPageFinished(view: WebView, url: String) {
+            if (!controller.isAttached(view) || url != view.url) return
             view.evaluateJavascript(cosmeticFilteringScript(adBlockRepository.selectors(url)), null)
             viewModel.updatePage(url = url, pageTitle = view.title)
             viewModel.setLoading(loading = false, progress = 1.0)
@@ -281,6 +339,7 @@ private fun createBrowserWebView(
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            if (!controller.isAttached(view)) return
             pageUrl.set(url)
             view.evaluateJavascript(cosmeticFilteringScript(adBlockRepository.selectors(url)), null)
             viewModel.updatePage(url = url)
@@ -292,7 +351,7 @@ private fun createBrowserWebView(
             request: WebResourceRequest,
             error: WebResourceError,
         ) {
-            if (request.isForMainFrame) {
+            if (controller.isAttached(view) && request.isForMainFrame) {
                 viewModel.setLoading(loading = false, progress = 0.0)
                 viewModel.setTransientMessage("加载失败: ${error.description}")
             }
@@ -302,8 +361,10 @@ private fun createBrowserWebView(
             view: WebView,
             detail: RenderProcessGoneDetail,
         ): Boolean {
-            releaseBrowserWebView(view, controller)
-            viewModel.handleRendererGone()
+            Log.w("BrowserWebView", "rendererGone crashed=${detail.didCrash()}")
+            val wasAttached = controller.isAttached(view)
+            controller.release(view, rendererGone = true)
+            if (wasAttached) viewModel.handleRendererGone()
             return true
         }
 
@@ -325,10 +386,12 @@ private fun createBrowserWebView(
 
     webChromeClient = object : WebChromeClient() {
         override fun onReceivedTitle(view: WebView, title: String?) {
+            if (!controller.isAttached(view)) return
             viewModel.updatePage(url = view.url, pageTitle = title.orEmpty())
         }
 
         override fun onProgressChanged(view: WebView, newProgress: Int) {
+            if (!controller.isAttached(view)) return
             viewModel.setProgress(newProgress / 100.0)
         }
     }

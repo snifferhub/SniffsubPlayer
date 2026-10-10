@@ -9,6 +9,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import androidx.lifecycle.SavedStateHandle
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -80,7 +83,7 @@ class BrowserViewModelTest {
 
         assertTrue(
             viewModel.acceptSnifferPayload(
-                """{"url":"https://cdn.test/master.m3u8","source":"fetch"}""",
+                payload(viewModel, "https://cdn.test/master.m3u8"),
             ),
         )
 
@@ -94,11 +97,12 @@ class BrowserViewModelTest {
     @Test
     fun payloads_are_ignored_until_sniffer_is_enabled_and_clear_is_explicit() = runTest {
         val viewModel = BrowserViewModel(FakePreferencesRepository(), CandidateAccumulator())
-        val json = """{"url":"https://cdn.test/video.mp4","source":"video"}"""
+        viewModel.updatePage("https://page.test", started = true)
+        val json = payload(viewModel, "https://cdn.test/video.mp4")
 
         assertFalse(viewModel.acceptSnifferPayload(json))
         viewModel.enableSniffer()
-        assertTrue(viewModel.acceptSnifferPayload(json))
+        assertTrue(viewModel.acceptSnifferPayload(payload(viewModel, "https://cdn.test/video.mp4")))
         assertEquals(1, viewModel.uiState.value.candidates.size)
 
         viewModel.clearCandidates()
@@ -130,14 +134,14 @@ class BrowserViewModelTest {
         val viewModel = BrowserViewModel(FakePreferencesRepository())
         viewModel.updatePage("https://old.test", started = true)
         viewModel.enableSniffer()
-        val oldJson = """{"url":"https://cdn.test/old.mp4","source":"video","pageUrl":"https://old.test"}"""
+        val oldJson = payload(viewModel, "https://cdn.test/old.mp4")
         assertTrue(viewModel.acceptSnifferPayload(oldJson))
         viewModel.updatePage("https://new.test", started = true)
         assertTrue(viewModel.uiState.value.candidates.isEmpty())
         assertFalse(viewModel.uiState.value.candidateSheetVisible)
         viewModel.enableSniffer()
         assertFalse(viewModel.acceptSnifferPayload(oldJson))
-        val newJson = """{"url":"https://cdn.test/new.mp4","source":"video","pageUrl":"https://new.test"}"""
+        val newJson = payload(viewModel, "https://cdn.test/new.mp4")
         assertTrue(viewModel.acceptSnifferPayload(newJson))
         assertEquals("https://cdn.test/new.mp4", viewModel.uiState.value.candidates.single().url)
     }
@@ -236,6 +240,69 @@ class BrowserViewModelTest {
         advanceUntilIdle()
 
         assertNull(viewModel.uiState.value.transientMessage)
+    }
+
+    @Test
+    fun spa_navigation_and_address_submission_clear_results_without_waiting_for_page_started() = runTest {
+        val viewModel = BrowserViewModel(FakePreferencesRepository())
+        viewModel.updatePage("https://page.test/a")
+        viewModel.requestSniff()
+        assertTrue(viewModel.acceptSnifferPayload(payload(viewModel, "https://cdn.test/a.mp4")))
+        viewModel.updatePage("https://page.test/b")
+        assertFalse(viewModel.uiState.value.snifferEnabled)
+        assertFalse(viewModel.uiState.value.candidateSheetVisible)
+        assertTrue(viewModel.uiState.value.candidates.isEmpty())
+        viewModel.requestSniff()
+        assertTrue(viewModel.acceptSnifferPayload(payload(viewModel, "https://cdn.test/b.mp4")))
+        viewModel.submitAddress("https://page.test/c")
+        assertTrue(viewModel.uiState.value.candidates.isEmpty())
+        assertFalse(viewModel.uiState.value.snifferEnabled)
+    }
+
+    @Test
+    fun same_url_reload_rejects_prior_scan_session_and_payloads_without_page_identity() = runTest {
+        val viewModel = BrowserViewModel(FakePreferencesRepository())
+        viewModel.updatePage("https://page.test/a")
+        viewModel.requestSniff()
+        val previous = payload(viewModel, "https://cdn.test/a.mp4")
+        assertTrue(viewModel.acceptSnifferPayload(previous))
+        viewModel.prepareReload()
+        assertTrue(viewModel.uiState.value.candidates.isEmpty())
+        viewModel.setLoading(false)
+        viewModel.requestSniff()
+        assertFalse(viewModel.acceptSnifferPayload(previous))
+        assertFalse(viewModel.acceptSnifferPayload("""{"url":"https://cdn.test/no-page.mp4"}"""))
+        assertTrue(viewModel.acceptSnifferPayload(payload(viewModel, "https://cdn.test/current.mp4")))
+    }
+
+    @Test
+    fun scan_expires_without_discarding_current_results_and_only_click_restarts_it() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val viewModel = BrowserViewModel(FakePreferencesRepository())
+        viewModel.updatePage("https://page.test/a")
+        viewModel.requestSniff()
+        assertTrue(viewModel.acceptSnifferPayload(payload(viewModel, "https://cdn.test/a.mp4")))
+        advanceTimeBy(SNIFF_WINDOW_MS + 1)
+        assertFalse(viewModel.uiState.value.snifferEnabled)
+        assertEquals(1, viewModel.uiState.value.candidates.size)
+        assertFalse(viewModel.acceptSnifferPayload(payload(viewModel, "https://cdn.test/late.mp4")))
+        viewModel.requestSniff()
+        assertTrue(viewModel.uiState.value.snifferEnabled)
+        viewModel.stopSniff()
+    }
+
+    @Test
+    fun recreated_model_restores_page_but_never_automatically_restores_sniffing() {
+        val saved = SavedStateHandle(mapOf("pageUrl" to "https://page.test/restored"))
+        val viewModel = BrowserViewModel(FakePreferencesRepository(), savedStateHandle = saved)
+        assertEquals("https://page.test/restored", viewModel.uiState.value.address)
+        assertFalse(viewModel.uiState.value.snifferEnabled)
+        assertTrue(viewModel.uiState.value.candidates.isEmpty())
+    }
+
+    private fun payload(viewModel: BrowserViewModel, url: String): String {
+        val state = viewModel.uiState.value
+        return """{"url":"$url","source":"video","pageUrl":"${state.currentPageUrl}","sessionId":${state.sniffRequestRevision}}"""
     }
 
     private fun candidate(url: String) = MediaCandidate(
