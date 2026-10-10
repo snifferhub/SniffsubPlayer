@@ -9,8 +9,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.longOrNull
 
-private const val RELEASES_URL = "https://api.github.com/repos/snifferhub/SniffsubPlayer/releases?per_page=30"
-private const val DOWNLOAD_ROOT = "https://github.com/snifferhub/SniffsubPlayer/releases/download/"
+private const val RELEASES_URL = "https://api.github.com/repos/snifferhub/SniffSubPlayer-Android-Releases/releases?per_page=30"
+private const val DOWNLOAD_ROOT = "https://github.com/snifferhub/SniffSubPlayer-Android-Releases/releases/download/"
 internal const val SIGNED_APK_NAME = "SniffSubPlayer-Android.apk"
 internal const val RELEASE_VERSION_CODE_BASE = 10_000
 

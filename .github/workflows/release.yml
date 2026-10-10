@@ -78,3 +78,33 @@ jobs:
             --title "SniffSubPlayer Android ${APP_VERSION} (build ${GITHUB_RUN_NUMBER})" \
             --generate-notes \
             --latest
+
+      - name: Sync signed APK to public update repository
+        env:
+          GH_TOKEN: ${{ secrets.ANDROID_UPDATES_PUBLISH_TOKEN }}
+        run: |
+          test -n "$GH_TOKEN"
+          gh auth setup-git
+          git clone --depth 1 https://github.com/snifferhub/SniffSubPlayer-Android-Releases.git "$RUNNER_TEMP/public-updates"
+          cd "$RUNNER_TEMP/public-updates"
+          git checkout -b packages
+          mkdir -p distribution
+          cp "$GITHUB_WORKSPACE/dist/SniffSubPlayer-Android.apk" distribution/
+          (cd distribution && sha256sum SniffSubPlayer-Android.apk > SHA256SUMS.txt)
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          source = Path(os.environ['GITHUB_WORKSPACE'], 'app/build.gradle.kts').read_text()
+          version = re.search(r'versionName = "([^"]+)"', source).group(1)
+          tag = f"android-v{version}-build.{os.environ['GITHUB_RUN_NUMBER']}"
+          Path('distribution/release.json').write_text(json.dumps({'tag': tag}))
+          Path('distribution/release-notes.md').write_text(
+              f'Signed Android release {tag}.\n\nUse Settings → Check for updates inside the app.\n')
+          PY
+          git config user.name 'SniffSubPlayer release bot'
+          git config user.email 'noreply@snifferhub.dev'
+          git add README.md .github/workflows/publish.yml distribution
+          git commit -m "chore(release): distribute Android build $GITHUB_RUN_NUMBER"
+          # This newly created repository's packages branch is a disposable APK snapshot.
+          # Historical APKs remain available as immutable-version Release assets.
+          git push --force origin HEAD:packages

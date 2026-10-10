@@ -21,7 +21,7 @@
 
 ## 应用内更新
 
-设置 → 检查更新 → 下载更新 → 安装更新。首次安装可能需要允许 SniffSubPlayer 安装未知应用，再由 Android 系统确认覆盖安装。只选择本仓库 Android 正式 Release 中的 `SniffSubPlayer-Android.apk`；下载后检查文件大小、SHA-256、包名、递增版本号与当前应用签名。Debug 包签名不同，不能通过此流程替换成正式包。
+设置 → 检查更新 → 下载更新 → 安装更新。首次安装可能需要允许 SniffSubPlayer 安装未知应用，再由 Android 系统确认覆盖安装。只选择公开更新仓库 `snifferhub/SniffSubPlayer-Android-Releases` 的 Android 正式 Release 中的 `SniffSubPlayer-Android.apk`；下载后检查文件大小、SHA-256、包名、递增版本号与当前应用签名。Debug 包签名不同，不能通过此流程替换成正式包。
 
 下载使用系统 DownloadManager，文件存放在应用专属目录，不需要存储权限；关闭弹窗仍继续下载，应用重新打开后恢复任务并重新校验。安装被取消或文件被清理时，可以再次安装或重新下载。此功能加入前的旧包需要手动安装一次新包，此后可在设置中检查更新。
 
@@ -51,6 +51,9 @@ node --test app/src/test/js/cosmetic-filtering.test.cjs
 APK 编译、签名和发布通过 GitHub Actions 完成，不在本地组装 APK。
 
 ## 自动发布
+
+源码仓库保持私有；公开更新仓库只保存签名 APK、版本信息、校验文件与发布工作流。私有 CI 使用存放在 Actions Secret 中的 `ANDROID_UPDATES_PUBLISH_TOKEN` 推送安装包快照（建议使用仅限公开仓库 Contents 读写权限的专用 Token），公开仓库自己的工作流使用其 `GITHUB_TOKEN` 创建 Release。APK 不包含访问私有仓库的 Token。
+
 
 每次推送 Android 发布分支后，[Build and Release](.github/workflows/release.yml) 可自动：
 
