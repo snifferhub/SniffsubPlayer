@@ -1,5 +1,13 @@
 # Repository Agent Rules
 
+## git limit
+
+- strict to the commit [principle](https://www.conventionalcommits.org/en/v1.0.0/).
+
+## Development boundary
+
+- If the feature can come true in official library or third-party library, prioritize to use them, avoid coding yourself. Using library before the user confirmation.
+
 ## Android build and test boundary
 
 - The Android implementation is the Kotlin/Jetpack Compose code under `app/`.
