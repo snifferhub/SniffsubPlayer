@@ -5,6 +5,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -17,6 +27,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.sniffsub.sniff_sub_player.ui.components.GlassNavigationBar
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -84,6 +99,13 @@ private fun SniffSubPlayerApp(
     val actionExecutor = remember(coroutineScope, messageController) {
         SafeUiActionExecutor(coroutineScope, messageController::show)
     }
+    val focusManager = LocalFocusManager.current
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val backgroundColor = androidx.compose.material3.MaterialTheme.colorScheme.background
+    val backdrop = rememberLayerBackdrop {
+        drawRect(backgroundColor)
+        drawContent()
+    }
     var selectedCandidate by remember { mutableStateOf<MediaCandidate?>(null) }
 
     LaunchedEffect(container.adBlockRepository, actionExecutor) {
@@ -93,167 +115,208 @@ private fun SniffSubPlayerApp(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        BrowserScreen(
-            state = browserState,
-            isActive = currentRoute == BROWSER_ROUTE,
-            accentArgb = preferences.accentArgb,
-            actions = BrowserActions(
-                onToggleBookmark = browserViewModel::toggleBookmark,
-                onOpenSettings = {
-                    navController.navigate(SETTINGS_ROUTE) { launchSingleTop = true }
+        // Capture only page content. The dock must remain outside its own backdrop.
+        Box(Modifier.fillMaxSize().then(
+            if (currentRoute != PLAYER_ROUTE) Modifier.layerBackdrop(backdrop) else Modifier,
+        )) {
+            BrowserScreen(
+                state = browserState,
+                isActive = currentRoute == BROWSER_ROUTE,
+                accentArgb = preferences.accentArgb,
+                actions = BrowserActions(
+                    onToggleBookmark = browserViewModel::toggleBookmark,
+                    onBack = webViewController::goBack,
+                    onForward = webViewController::goForward,
+                    onSubmitAddress = { input ->
+                        browserViewModel.submitAddress(input)?.let(webViewController::loadUrl)
+                    },
+                    onRequestSniff = browserViewModel::requestSniff,
+                    onDismissCandidates = browserViewModel::dismissCandidateSheet,
+                    onClearCandidates = browserViewModel::clearCandidates,
+                    onOpenCandidate = { candidate ->
+                        selectedCandidate = candidate
+                        navController.navigate(PLAYER_ROUTE)
+                    },
+                    onConsumeTransientMessage = browserViewModel::clearTransientMessage,
+                ),
+                webViewContent = {
+                    BrowserWebView(
+                        state = browserState,
+                        viewModel = browserViewModel,
+                        adBlockRepository = container.adBlockRepository,
+                        controller = webViewController,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 },
-                onBack = webViewController::goBack,
-                onForward = webViewController::goForward,
-                onSubmitAddress = { input ->
-                    browserViewModel.submitAddress(input)?.let(webViewController::loadUrl)
-                },
-                onEnableSniffer = { browserViewModel.enableSniffer() },
-                onClearCandidates = browserViewModel::clearCandidates,
-                onOpenCandidate = { candidate ->
-                    selectedCandidate = candidate
-                    navController.navigate(PLAYER_ROUTE)
-                },
-                onConsumeTransientMessage = browserViewModel::clearTransientMessage,
-            ),
-            webViewContent = {
-                BrowserWebView(
-                    state = browserState,
-                    viewModel = browserViewModel,
-                    adBlockRepository = container.adBlockRepository,
-                    controller = webViewController,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            },
-        )
+            )
 
-        NavHost(
-            navController = navController,
-            startDestination = BROWSER_ROUTE,
-            // The empty browser destination must not cover the persistent WebView.
-            modifier = Modifier
-                .fillMaxSize()
-                .zIndex(if (currentRoute == BROWSER_ROUTE) -1f else 1f),
-        ) {
-            composable(BROWSER_ROUTE) { }
-            composable(SETTINGS_ROUTE) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    SettingsScreen(
-                        preferences = preferences,
-                        actions = SettingsActions(
-                            onBack = { navController.popBackStack() },
-                            onUserAgentSelected = { value ->
-                                actionExecutor.launch("User Agent 更新失败") {
-                                    container.preferencesRepository.update { it.copy(userAgent = value) }
-                                }
-                            },
-                            onAccentSelected = { value ->
-                                actionExecutor.launch("进度条颜色更新失败") {
-                                    container.preferencesRepository.update { it.copy(accentArgb = value) }
-                                }
-                            },
-                            onResetAccent = {
-                                actionExecutor.launch("进度条颜色重置失败") {
-                                    container.preferencesRepository.update {
-                                        it.copy(accentArgb = DEFAULT_ACCENT_ARGB)
+            NavHost(
+                navController = navController,
+                startDestination = BROWSER_ROUTE,
+                // The empty browser destination must not cover the persistent WebView.
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(if (currentRoute == BROWSER_ROUTE) -1f else 1f),
+            ) {
+                composable(BROWSER_ROUTE) { }
+                composable(SETTINGS_ROUTE) {
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        SettingsScreen(
+                            preferences = preferences,
+                            showBack = false,
+                            bottomContentPadding = 96.dp,
+                            actions = SettingsActions(
+                                onBack = { navController.popBackStack() },
+                                onUserAgentSelected = { value ->
+                                    actionExecutor.launch("User Agent 更新失败") {
+                                        container.preferencesRepository.update { it.copy(userAgent = value) }
                                     }
-                                }
-                            },
-                            onOpenBookmarks = { navController.navigate(BOOKMARKS_ROUTE) },
-                            onOpenAdBlock = { navController.navigate(AD_BLOCK_ROUTE) },
-                        ),
-                    )
-                }
-            }
-            composable(BOOKMARKS_ROUTE) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    BookmarksScreen(
-                        bookmarks = preferences.bookmarks,
-                        actions = BookmarksActions(
-                            onBack = { navController.popBackStack() },
-                            onOpenBookmark = { bookmark ->
-                                browserViewModel.submitAddress(bookmark.url)
-                                    ?.let(webViewController::loadUrl)
-                                navController.popBackStack(BROWSER_ROUTE, inclusive = false)
-                            },
-                            onDeleteBookmark = { bookmark ->
-                                actionExecutor.launch("删除收藏失败") {
-                                    container.preferencesRepository.update { current ->
-                                        current.copy(
-                                            bookmarks = current.bookmarks.filterNot { it.id == bookmark.id },
-                                        )
+                                },
+                                onAccentSelected = { value ->
+                                    actionExecutor.launch("进度条颜色更新失败") {
+                                        container.preferencesRepository.update { it.copy(accentArgb = value) }
                                     }
-                                }
-                            },
-                        ),
-                    )
+                                },
+                                onResetAccent = {
+                                    actionExecutor.launch("进度条颜色重置失败") {
+                                        container.preferencesRepository.update {
+                                            it.copy(accentArgb = DEFAULT_ACCENT_ARGB)
+                                        }
+                                    }
+                                },
+                                onOpenBookmarks = { navController.navigate(BOOKMARKS_ROUTE) },
+                                onOpenAdBlock = { navController.navigate(AD_BLOCK_ROUTE) },
+                            ),
+                        )
+                    }
                 }
-            }
-            composable(AD_BLOCK_ROUTE) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    AdBlockSettingsScreen(
-                        state = adBlockState,
-                        actions = AdBlockSettingsActions(
-                            onBack = { navController.popBackStack() },
-                            onSetEnabled = { enabled ->
-                                actionExecutor.launch("广告拦截开关更新失败") {
-                                    container.adBlockRepository.setEnabled(enabled)
-                                    val current = container.adBlockRepository.state.value
-                                    if (
-                                        enabled &&
-                                        (current.convertedRulesCount == 0 || current.lastUpdatedAtEpochMs == null || current.configurationNeedsUpdate) &&
-                                        current.subscriptions.any { it.enabled }
+                composable(BOOKMARKS_ROUTE) {
+                    Surface(modifier = Modifier.fillMaxSize().padding(bottom = 96.dp)) {
+                        BookmarksScreen(
+                            bookmarks = preferences.bookmarks,
+                            actions = BookmarksActions(
+                                onBack = { navController.popBackStack() },
+                                onOpenBookmark = { bookmark ->
+                                    browserViewModel.submitAddress(bookmark.url)
+                                        ?.let(webViewController::loadUrl)
+                                    navController.popBackStack(BROWSER_ROUTE, inclusive = false)
+                                },
+                                onDeleteBookmark = { bookmark ->
+                                    actionExecutor.launch("删除收藏失败") {
+                                        container.preferencesRepository.update { current ->
+                                            current.copy(
+                                                bookmarks = current.bookmarks.filterNot { it.id == bookmark.id },
+                                            )
+                                        }
+                                    }
+                                },
+                            ),
+                        )
+                    }
+                }
+                composable(AD_BLOCK_ROUTE) {
+                    Surface(modifier = Modifier.fillMaxSize().padding(bottom = 96.dp)) {
+                        AdBlockSettingsScreen(
+                            state = adBlockState,
+                            actions = AdBlockSettingsActions(
+                                onBack = { navController.popBackStack() },
+                                onSetEnabled = { enabled ->
+                                    actionExecutor.launch("广告拦截开关更新失败") {
+                                        container.adBlockRepository.setEnabled(enabled)
+                                        val current = container.adBlockRepository.state.value
+                                        if (
+                                            enabled &&
+                                            (current.convertedRulesCount == 0 || current.lastUpdatedAtEpochMs == null || current.configurationNeedsUpdate) &&
+                                            current.subscriptions.any { it.enabled }
+                                        ) {
+                                            container.adBlockRepository.refresh().getOrThrow()
+                                        }
+                                    }
+                                },
+                                onSetAutomaticUpdatesEnabled = { enabled ->
+                                    actionExecutor.launch("自动更新开关更新失败") {
+                                        container.adBlockRepository.setAutomaticUpdatesEnabled(enabled)
+                                    }
+                                },
+                                onSetSubscriptionEnabled = { id, enabled ->
+                                    actionExecutor.launch("订阅开关更新失败") {
+                                        container.adBlockRepository.setSubscriptionEnabled(id, enabled)
+                                    }
+                                },
+                                onAddSubscription = { url ->
+                                    actionExecutor.execute(
+                                        fallbackMessage = "添加订阅失败",
+                                        publishError = false,
                                     ) {
+                                        container.adBlockRepository.addSubscription(url).getOrThrow()
+                                    }
+                                },
+                                onRemoveSubscription = { id ->
+                                    actionExecutor.launch("删除订阅失败") {
+                                        container.adBlockRepository.removeSubscription(id)
+                                    }
+                                },
+                                onRefresh = {
+                                    actionExecutor.launch("广告规则更新失败") {
                                         container.adBlockRepository.refresh().getOrThrow()
                                     }
-                                }
+                                },
+                            ),
+                        )
+                    }
+                }
+                composable(PLAYER_ROUTE) {
+                    val candidate = selectedCandidate
+                    if (candidate == null) {
+                        LaunchedEffect(Unit) { navController.popBackStack() }
+                    } else {
+                        PlayerScreen(
+                            candidate = candidate,
+                            subtitleRepository = container.subtitleRepository,
+                            onBack = {
+                                selectedCandidate = null
+                                navController.popBackStack()
                             },
-                            onSetAutomaticUpdatesEnabled = { enabled ->
-                                actionExecutor.launch("自动更新开关更新失败") {
-                                    container.adBlockRepository.setAutomaticUpdatesEnabled(enabled)
-                                }
-                            },
-                            onSetSubscriptionEnabled = { id, enabled ->
-                                actionExecutor.launch("订阅开关更新失败") {
-                                    container.adBlockRepository.setSubscriptionEnabled(id, enabled)
-                                }
-                            },
-                            onAddSubscription = { url ->
-                                actionExecutor.execute(
-                                    fallbackMessage = "添加订阅失败",
-                                    publishError = false,
-                                ) {
-                                    container.adBlockRepository.addSubscription(url).getOrThrow()
-                                }
-                            },
-                            onRemoveSubscription = { id ->
-                                actionExecutor.launch("删除订阅失败") {
-                                    container.adBlockRepository.removeSubscription(id)
-                                }
-                            },
-                            onRefresh = {
-                                actionExecutor.launch("广告规则更新失败") {
-                                    container.adBlockRepository.refresh().getOrThrow()
-                                }
-                            },
-                        ),
-                    )
+                        )
+                    }
                 }
             }
-            composable(PLAYER_ROUTE) {
-                val candidate = selectedCandidate
-                if (candidate == null) {
-                    LaunchedEffect(Unit) { navController.popBackStack() }
-                } else {
-                    PlayerScreen(
-                        candidate = candidate,
-                        subtitleRepository = container.subtitleRepository,
-                        onBack = {
-                            selectedCandidate = null
-                            navController.popBackStack()
-                        },
-                    )
-                }
-            }
+
+        }
+
+        AnimatedVisibility(
+            visible = currentRoute != PLAYER_ROUTE && !keyboardVisible,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+            modifier = Modifier.align(Alignment.BottomCenter).zIndex(2f),
+        ) {
+            GlassNavigationBar(
+                backdrop = backdrop,
+                browserSelected = currentRoute == BROWSER_ROUTE,
+                sniffEnabled = currentRoute == BROWSER_ROUTE && !browserState.loading &&
+                    browserState.currentPageUrl.ifBlank { browserState.address }.isNotBlank(),
+                onBrowser = {
+                    focusManager.clearFocus()
+                    browserViewModel.dismissCandidateSheet()
+                    navController.popBackStack(BROWSER_ROUTE, inclusive = false)
+                },
+                onSettings = {
+                    focusManager.clearFocus()
+                    browserViewModel.dismissCandidateSheet()
+                    if (currentRoute != SETTINGS_ROUTE) {
+                        navController.navigate(SETTINGS_ROUTE) {
+                            popUpTo(BROWSER_ROUTE)
+                            launchSingleTop = true
+                        }
+                    }
+                },
+                onSniff = {
+                    focusManager.clearFocus()
+                    browserViewModel.requestSniff()
+                },
+                modifier = Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)
+                    .widthIn(max = 520.dp).fillMaxWidth(),
+            )
         }
 
         // PlayerScreen handles its own subtitle panel before leaving playback.
@@ -265,9 +328,10 @@ private fun SniffSubPlayerApp(
             message = globalMessage,
             onConsumed = messageController::consume,
             modifier = Modifier
-                .zIndex(2f)
+                .zIndex(3f)
                 .align(Alignment.BottomCenter)
-                .padding(16.dp),
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = if (currentRoute == PLAYER_ROUTE) 16.dp else 96.dp),
         )
     }
 }

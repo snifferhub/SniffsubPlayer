@@ -23,6 +23,8 @@ data class BrowserUiState(
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
     val snifferEnabled: Boolean = false,
+    val sniffRequestRevision: Long = 0L,
+    val candidateSheetVisible: Boolean = false,
     val candidates: List<MediaCandidate> = emptyList(),
     val bookmarks: List<Bookmark> = emptyList(),
     val userAgent: String = "",
@@ -39,6 +41,7 @@ sealed interface BrowserEvent {
     data class ProgressChanged(val progress: Double) : BrowserEvent
     data class NavigationChanged(val canGoBack: Boolean, val canGoForward: Boolean) : BrowserEvent
     data class SnifferChanged(val enabled: Boolean) : BrowserEvent
+    data class CandidateSheetChanged(val visible: Boolean) : BrowserEvent
     data class CandidatesChanged(val candidates: List<MediaCandidate>) : BrowserEvent
     data class PreferencesChanged(val preferences: AppPreferences) : BrowserEvent
     data class MessageChanged(val message: String?) : BrowserEvent
@@ -55,6 +58,8 @@ fun reduceBrowserEvent(state: BrowserUiState, event: BrowserEvent): BrowserUiSta
             loading = true,
             progress = 0.05,
             snifferEnabled = false,
+            candidateSheetVisible = false,
+            candidates = emptyList(),
             transientMessage = null,
         )
     }
@@ -75,7 +80,11 @@ fun reduceBrowserEvent(state: BrowserUiState, event: BrowserEvent): BrowserUiSta
         canGoBack = event.canGoBack,
         canGoForward = event.canGoForward,
     )
-    is BrowserEvent.SnifferChanged -> state.copy(snifferEnabled = event.enabled)
+    is BrowserEvent.SnifferChanged -> state.copy(
+        snifferEnabled = event.enabled,
+        sniffRequestRevision = state.sniffRequestRevision + if (event.enabled) 1L else 0L,
+    )
+    is BrowserEvent.CandidateSheetChanged -> state.copy(candidateSheetVisible = event.visible)
     is BrowserEvent.CandidatesChanged -> state.copy(candidates = event.candidates.toList())
     is BrowserEvent.PreferencesChanged -> state.copy(
         bookmarks = event.preferences.bookmarks.toList(),
@@ -95,6 +104,9 @@ fun reduceBrowserEvent(state: BrowserUiState, event: BrowserEvent): BrowserUiSta
         transientMessage = "网页渲染进程已退出，请重新加载",
         transientMessageRevision = state.transientMessageRevision + 1L,
         webViewGeneration = state.webViewGeneration + 1,
+        snifferEnabled = false,
+        candidateSheetVisible = false,
+        candidates = emptyList(),
     )
 }
 
@@ -129,6 +141,7 @@ class BrowserViewModel(
         val normalizedUrl = url?.trim().orEmpty()
         if (normalizedUrl.isNotEmpty()) candidateAccumulator.currentPageUrl = normalizedUrl
         if (started) {
+            candidateAccumulator.clear()
             dispatch(BrowserEvent.PageStarted(normalizedUrl))
         } else {
             dispatch(BrowserEvent.PageUpdated(url = normalizedUrl, title = pageTitle))
@@ -151,10 +164,22 @@ class BrowserViewModel(
         dispatch(BrowserEvent.SnifferChanged(enabled))
     }
 
+    fun requestSniff() {
+        val state = mutableUiState.value
+        if (state.loading || state.currentPageUrl.ifBlank { state.address }.isBlank()) return
+        enableSniffer()
+        dispatch(BrowserEvent.CandidateSheetChanged(true))
+    }
+
+    fun dismissCandidateSheet() {
+        dispatch(BrowserEvent.CandidateSheetChanged(false))
+    }
+
     fun acceptSnifferPayload(json: String): Boolean {
         val state = mutableUiState.value
         if (!state.snifferEnabled) return false
         val payload = parseSnifferPayload(json) ?: return false
+        if (payload.pageUrl.isNotBlank() && payload.pageUrl != state.currentPageUrl) return false
         val added = candidateAccumulator.add(
             url = payload.url,
             source = payload.source,
@@ -207,6 +232,7 @@ class BrowserViewModel(
     }
 
     fun handleRendererGone() {
+        candidateAccumulator.clear()
         dispatch(BrowserEvent.RendererGone)
     }
 

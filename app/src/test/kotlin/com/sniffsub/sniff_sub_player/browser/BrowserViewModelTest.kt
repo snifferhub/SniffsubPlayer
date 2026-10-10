@@ -36,7 +36,7 @@ class BrowserViewModelTest {
     }
 
     @Test
-    fun navigation_resets_sniffer_but_keeps_previous_candidates_until_clear() {
+    fun navigation_resets_sniffer_and_previous_page_candidates() {
         val state = BrowserUiState(
             snifferEnabled = true,
             candidates = listOf(candidate("https://cdn.test/old.mp4")),
@@ -48,7 +48,7 @@ class BrowserViewModelTest {
         )
 
         assertFalse(navigated.snifferEnabled)
-        assertEquals(1, navigated.candidates.size)
+        assertTrue(navigated.candidates.isEmpty())
         assertEquals("https://next.test", navigated.currentPageUrl)
         assertEquals("https://next.test", navigated.address)
         assertTrue(navigated.loading)
@@ -103,6 +103,43 @@ class BrowserViewModelTest {
 
         viewModel.clearCandidates()
         assertTrue(viewModel.uiState.value.candidates.isEmpty())
+    }
+
+    @Test
+    fun repeated_user_requests_open_sheet_and_increment_scan_revision() = runTest {
+        val viewModel = BrowserViewModel(FakePreferencesRepository())
+        viewModel.requestSniff()
+        assertFalse(viewModel.uiState.value.candidateSheetVisible)
+        viewModel.updatePage("https://page.test/watch", started = true)
+        viewModel.requestSniff()
+        assertFalse(viewModel.uiState.value.snifferEnabled)
+        viewModel.setLoading(false)
+        viewModel.requestSniff()
+        val revision = viewModel.uiState.value.sniffRequestRevision
+        assertTrue(viewModel.uiState.value.candidateSheetVisible)
+        assertTrue(viewModel.uiState.value.snifferEnabled)
+        viewModel.dismissCandidateSheet()
+        assertFalse(viewModel.uiState.value.candidateSheetVisible)
+        viewModel.requestSniff()
+        assertTrue(viewModel.uiState.value.candidateSheetVisible)
+        assertEquals(revision + 1, viewModel.uiState.value.sniffRequestRevision)
+    }
+
+    @Test
+    fun page_change_clears_accumulator_and_rejects_delayed_previous_page_payloads() = runTest {
+        val viewModel = BrowserViewModel(FakePreferencesRepository())
+        viewModel.updatePage("https://old.test", started = true)
+        viewModel.enableSniffer()
+        val oldJson = """{"url":"https://cdn.test/old.mp4","source":"video","pageUrl":"https://old.test"}"""
+        assertTrue(viewModel.acceptSnifferPayload(oldJson))
+        viewModel.updatePage("https://new.test", started = true)
+        assertTrue(viewModel.uiState.value.candidates.isEmpty())
+        assertFalse(viewModel.uiState.value.candidateSheetVisible)
+        viewModel.enableSniffer()
+        assertFalse(viewModel.acceptSnifferPayload(oldJson))
+        val newJson = """{"url":"https://cdn.test/new.mp4","source":"video","pageUrl":"https://new.test"}"""
+        assertTrue(viewModel.acceptSnifferPayload(newJson))
+        assertEquals("https://cdn.test/new.mp4", viewModel.uiState.value.candidates.single().url)
     }
 
     @Test

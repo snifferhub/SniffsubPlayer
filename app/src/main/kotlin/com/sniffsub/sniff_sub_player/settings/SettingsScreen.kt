@@ -47,6 +47,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.sniffsub.sniff_sub_player.data.AppPreferences
 
@@ -98,6 +99,8 @@ fun SettingsScreen(
     preferences: AppPreferences,
     actions: SettingsActions,
     modifier: Modifier = Modifier,
+    showBack: Boolean = true,
+    bottomContentPadding: Dp = 0.dp,
 ) {
     var showUserAgentDialog by remember { mutableStateOf(false) }
     var showAccentDialog by remember { mutableStateOf(false) }
@@ -106,12 +109,13 @@ fun SettingsScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        topBar = { SettingsTopBar(title = "设置", onBack = actions.onBack) },
+        topBar = { SettingsTopBar(title = "设置", onBack = actions.onBack, showBack = showBack) },
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .padding(bottom = bottomContentPadding)
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 36.dp),
         ) {
@@ -255,12 +259,14 @@ fun SettingsScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun SettingsTopBar(title: String, onBack: () -> Unit) {
+internal fun SettingsTopBar(title: String, onBack: () -> Unit, showBack: Boolean = true) {
     CenterAlignedTopAppBar(
         title = { Text(title) },
         navigationIcon = {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            if (showBack) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                }
             }
         },
     )

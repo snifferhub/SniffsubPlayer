@@ -2,12 +2,11 @@ package com.sniffsub.sniff_sub_player.browser
 
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.Text
-import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
@@ -49,27 +48,26 @@ class BrowserScreenTest {
         }
 
         compose.onNodeWithTag("bookmark_button").assertExists().assertIsEnabled()
-        compose.onNodeWithTag("settings_button").assertExists().assertIsEnabled()
+        compose.onNodeWithTag("settings_button").assertDoesNotExist()
         compose.onNodeWithTag("back_button").assertExists().assertIsNotEnabled()
         compose.onNodeWithTag("forward_button").assertExists().assertIsEnabled()
         compose.onNodeWithTag("address_field").assertExists()
         compose.onNodeWithTag("browser_webview").assertExists()
-        compose.onNodeWithTag("candidate_panel").assertExists()
-        compose.onNodeWithTag("enable_sniffer_button").assertIsEnabled()
-        compose.onNodeWithTag("clear_candidates_button").assertIsEnabled()
+        compose.onNodeWithTag("candidate_panel").assertDoesNotExist()
+        compose.onNodeWithTag("enable_sniffer_button").assertDoesNotExist()
     }
 
     @Test
-    fun loading_disables_sniffer_and_empty_candidates_disable_clear() {
+    fun sheet_loading_disables_rescan_and_empty_candidates_disable_clear() {
         compose.setContent {
             BrowserScreen(
-                state = sampleState().copy(loading = true, candidates = emptyList()),
+                state = sampleState().copy(loading = true, candidates = emptyList(), candidateSheetVisible = true),
                 actions = noOpActions(),
                 webViewContent = {},
             )
         }
 
-        compose.onNodeWithTag("enable_sniffer_button").assertIsNotEnabled()
+        compose.onNodeWithTag("rescan_button").assertIsNotEnabled()
         compose.onNodeWithTag("clear_candidates_button").assertIsNotEnabled()
     }
 
@@ -79,14 +77,18 @@ class BrowserScreenTest {
         var opened: MediaCandidate? = null
         compose.setContent {
             BrowserScreen(
-                state = sampleState().copy(candidates = candidates),
+                state = sampleState().copy(candidates = candidates, candidateSheetVisible = true),
                 actions = noOpActions().copy(onOpenCandidate = { opened = it }),
                 webViewContent = {},
             )
         }
 
-        compose.onAllNodesWithTag("candidate_row", useUnmergedTree = true).assertCountEquals(30)
+        compose.onNodeWithTag("candidate_list").performScrollToIndex(29)
+        compose.onNodeWithTag("candidate_29").assertExists()
+        compose.onNodeWithTag("candidate_30").assertDoesNotExist()
+        compose.onNodeWithTag("candidate_list").performScrollToIndex(0)
         compose.onNodeWithTag("candidate_0").performClick()
+        compose.waitUntil { opened != null }
         assertEquals(candidates.first(), opened)
     }
 
@@ -169,11 +171,11 @@ class BrowserScreenTest {
 
     private fun noOpActions() = BrowserActions(
         onToggleBookmark = {},
-        onOpenSettings = {},
         onBack = {},
         onForward = {},
         onSubmitAddress = {},
-        onEnableSniffer = {},
+        onRequestSniff = {},
+        onDismissCandidates = {},
         onClearCandidates = {},
         onOpenCandidate = {},
         onConsumeTransientMessage = {},

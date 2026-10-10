@@ -19,9 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -30,9 +28,16 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.ClearAll
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Waves
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -43,7 +48,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -69,11 +73,11 @@ import kotlinx.coroutines.launch
 
 data class BrowserActions(
     val onToggleBookmark: () -> Unit,
-    val onOpenSettings: () -> Unit,
     val onBack: () -> Unit,
     val onForward: () -> Unit,
     val onSubmitAddress: (String) -> Unit,
-    val onEnableSniffer: () -> Unit,
+    val onRequestSniff: () -> Unit,
+    val onDismissCandidates: () -> Unit,
     val onClearCandidates: () -> Unit,
     val onOpenCandidate: (MediaCandidate) -> Unit,
     val onConsumeTransientMessage: () -> Unit,
@@ -191,16 +195,7 @@ fun BrowserScreen(
                             )
                         }
                     }
-                    IconButton(
-                        onClick = {
-                            browserFocusRequester.requestFocus()
-                            keyboardController?.hide()
-                            actions.onOpenSettings()
-                        },
-                        modifier = Modifier.testTag("settings_button"),
-                    ) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置")
-                    }
+
                 },
             )
         },
@@ -234,82 +229,106 @@ fun BrowserScreen(
                 webViewContent()
             }
 
-            CandidatePanel(state = state, actions = actions)
         }
+    }
+    if (isActive && state.candidateSheetVisible) {
+        CandidateSheet(state = state, actions = actions)
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CandidatePanel(
+private fun CandidateSheet(
     state: BrowserUiState,
     actions: BrowserActions,
 ) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = 250.dp)
-            .testTag("candidate_panel"),
-        tonalElevation = 3.dp,
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    var closing by remember { mutableStateOf(false) }
+    fun close(afterClose: () -> Unit = {}) {
+        if (closing) return
+        closing = true
+        scope.launch {
+            sheetState.hide()
+            actions.onDismissCandidates()
+            afterClose()
+        }
+    }
+    ModalBottomSheet(
+        onDismissRequest = actions.onDismissCandidates,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.testTag("candidate_panel"),
     ) {
-        Column {
+        Column(Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "嗅探到 ${state.candidates.size} 个媒体资源",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = actions.onEnableSniffer,
-                    enabled = !state.loading && !state.snifferEnabled,
-                    modifier = Modifier.testTag("enable_sniffer_button"),
-                ) {
-                    Icon(Icons.Default.Waves, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (state.snifferEnabled) "已启用" else "启用嗅探")
+                Column(Modifier.weight(1f)) {
+                    Text("媒体资源", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "发现 ${state.candidates.size} 个资源 · 点击即可播放",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                IconButton(
+                IconButton(onClick = { close() }, modifier = Modifier.testTag("close_candidates_button")) {
+                    Icon(Icons.Default.Close, contentDescription = "关闭资源列表")
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    onClick = actions.onRequestSniff,
+                    enabled = !state.loading,
+                    modifier = Modifier.testTag("rescan_button"),
+                ) {
+                    Icon(Icons.Default.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("重新扫描")
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(
                     onClick = actions.onClearCandidates,
                     enabled = state.candidates.isNotEmpty(),
                     modifier = Modifier.testTag("clear_candidates_button"),
                 ) {
-                    Icon(Icons.Default.ClearAll, contentDescription = "清空资源")
+                    Icon(Icons.Default.ClearAll, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("清空")
                 }
             }
-
             if (state.candidates.isEmpty()) {
-                Text(
-                    text = if (state.snifferEnabled) {
-                        "嗅探已启用，播放视频后会收集 m3u8 / mp4 / blob / 分片候选"
-                    } else {
-                        "页面加载完成后，点击“启用嗅探”再播放视频"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
-                )
-            } else {
                 Column(
-                    modifier = Modifier
-                        .heightIn(max = 190.dp)
-                        .verticalScroll(rememberScrollState()),
+                    Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    state.candidates.take(MAXIMUM_VISIBLE_CANDIDATES).forEachIndexed { index, candidate ->
-                        Box(modifier = Modifier.testTag("candidate_row")) {
-                            CandidateRow(
-                                candidate = candidate,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { actions.onOpenCandidate(candidate) }
-                                    .testTag("candidate_$index")
-                                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                            )
+                    Icon(Icons.Default.Waves, contentDescription = null, tint = Color(0xFF0088FF), modifier = Modifier.size(40.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text("暂未发现媒体资源", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "返回网页播放视频，再点击蓝色按钮。嗅探会继续收集当前页面的媒体资源。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp).testTag("candidate_list")) {
+                    itemsIndexed(state.candidates.take(MAXIMUM_VISIBLE_CANDIDATES), key = { _, candidate -> candidate.url }) { index, candidate ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .clickable { close { actions.onOpenCandidate(candidate) } }
+                                .testTag("candidate_$index")
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CandidateRow(candidate = candidate, modifier = Modifier.weight(1f).testTag("candidate_row"))
+                            Spacer(Modifier.width(12.dp))
+                            Icon(Icons.Default.PlayCircleOutline, contentDescription = null, tint = Color(0xFF0088FF))
                         }
+                        HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                     }
                 }
             }

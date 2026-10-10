@@ -1,5 +1,8 @@
 (() => {
-  if (window.__sniffSubPlayerInstalled) return true;
+  if (window.__sniffSubPlayerInstalled) {
+    window.__sniffSubPlayerRescan();
+    return true;
+  }
   window.__sniffSubPlayerInstalled = true;
 
   const seen = new Set();
@@ -82,6 +85,11 @@
       }
     }, true);
   });
+
+  window.__sniffSubPlayerRescan = () => {
+    seen.clear();
+    scan();
+  };
 
   scan();
   window.__sniffSubPlayerTimer = setInterval(scan, 1200);

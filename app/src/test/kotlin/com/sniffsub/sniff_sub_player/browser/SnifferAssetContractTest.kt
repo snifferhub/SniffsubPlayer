@@ -46,6 +46,7 @@ class SnifferAssetContractTest {
             const script = fs.readFileSync(process.argv[1], 'utf8');
             const reports = [];
             let fetchCall = 0;
+            let timerCalls = 0;
 
             class FakeRequest {
               constructor(input) {
@@ -71,7 +72,7 @@ class SnifferAssetContractTest {
                 addEventListener: () => {},
               },
               performance: { getEntriesByType: () => [] },
-              setInterval: () => 1,
+              setInterval: () => { timerCalls++; return 1; },
               SniffBridge: {
                 report: (json) => reports.push(JSON.parse(json)),
               },
@@ -105,6 +106,16 @@ class SnifferAssetContractTest {
                   { url: 'https://cdn.test/xhr-url.m4s', source: 'xhr' },
                 ],
               );
+              const installedFetch = sandbox.fetch;
+              sandbox.performance.getEntriesByType = () => [{ name: 'https://cdn.test/fetch-url.mp4' }];
+              vm.runInContext(script, sandbox);
+              assert.strictEqual(sandbox.fetch, installedFetch);
+              assert.strictEqual(timerCalls, 1);
+              assert.strictEqual(reports.length, 7);
+              assert.strictEqual(reports[6].source, 'performance');
+              vm.runInContext(script, sandbox);
+              assert.strictEqual(reports.length, 8);
+              assert.strictEqual(timerCalls, 1);
             })().catch((error) => {
               console.error(error.stack || error);
               process.exit(1);

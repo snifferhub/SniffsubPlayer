@@ -30,6 +30,14 @@ import java.util.WeakHashMap
 
 class BrowserWebViewController internal constructor() {
     private val webViewSlot = BrowserWebViewReleaseCoordinator<WebView>()
+    private val sniffRequests = WeakHashMap<WebView, Long>()
+
+    internal fun applySnifferScript(view: WebView, revision: Long, script: String) {
+        if (sniffRequests[view] == revision) return
+        sniffRequests[view] = revision
+        view.evaluateJavascript(script, null)
+    }
+
     private val cosmeticScripts = WeakHashMap<WebView, String>()
 
     internal fun applyCosmeticScript(view: WebView, script: String) {
@@ -169,7 +177,7 @@ fun BrowserWebView(
                     if (snifferScript == null) {
                         viewModel.setTransientMessage("嗅探脚本读取失败")
                     } else {
-                        webView.evaluateJavascript(snifferScript, null)
+                        controller.applySnifferScript(webView, state.sniffRequestRevision, snifferScript)
                     }
                 }
             },
