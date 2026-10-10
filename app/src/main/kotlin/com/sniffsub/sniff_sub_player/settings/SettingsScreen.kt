@@ -22,6 +22,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SystemUpdate
+import com.sniffsub.sniff_sub_player.BuildIdentity
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -91,6 +93,7 @@ data class SettingsActions(
     val onResetAccent: () -> Unit,
     val onOpenBookmarks: () -> Unit,
     val onOpenAdBlock: () -> Unit,
+    val onCheckForUpdates: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,6 +104,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     showBack: Boolean = true,
     bottomContentPadding: Dp = 0.dp,
+    updateSummary: String = BuildIdentity.displayVersion,
 ) {
     var showUserAgentDialog by remember { mutableStateOf(false) }
     var showAccentDialog by remember { mutableStateOf(false) }
@@ -170,6 +174,15 @@ fun SettingsScreen(
                     leading = { Icon(Icons.Default.Security, contentDescription = null) },
                     onClick = actions.onOpenAdBlock,
                     modifier = Modifier.testTag("ad_block_row"),
+                )
+            }
+            SettingsSection(title = "应用", footer = "从 GitHub 获取正式版本，下载完成后由系统确认安装。") {
+                SettingsRow(
+                    label = "检查更新",
+                    value = updateSummary,
+                    leading = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },
+                    onClick = actions.onCheckForUpdates,
+                    modifier = Modifier.testTag("check_update_row"),
                 )
             }
         }

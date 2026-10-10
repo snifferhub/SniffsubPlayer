@@ -29,7 +29,7 @@ jobs:
           cache: gradle
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug -PreleaseBuildNumber="$GITHUB_RUN_NUMBER" --no-daemon
 
       - name: Configure release signing
         env:
@@ -50,7 +50,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease -PreleaseBuildNumber="$GITHUB_RUN_NUMBER" --no-daemon
 
       - name: Collect APKs
         run: |

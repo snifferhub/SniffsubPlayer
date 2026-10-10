@@ -18,6 +18,9 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val releaseBuildNumber = providers.gradleProperty("releaseBuildNumber").orElse("0").get().toInt()
+require(releaseBuildNumber in 0..(Int.MAX_VALUE - 10_000))
+
 android {
     namespace = "com.sniffsub.sniff_sub_player"
     compileSdk = 36
@@ -26,8 +29,9 @@ android {
         applicationId = "com.sniffsub.sniff_sub_player"
         minSdk = 28
         targetSdk = 36
-        versionCode = 3
+        versionCode = if (releaseBuildNumber > 0) 10_000 + releaseBuildNumber else 4
         versionName = "1.1.0"
+        buildConfigField("int", "RELEASE_BUILD_NUMBER", releaseBuildNumber.toString())
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -36,6 +40,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     signingConfigs {

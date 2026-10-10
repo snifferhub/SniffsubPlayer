@@ -61,6 +61,8 @@ import com.sniffsub.sniff_sub_player.settings.BookmarksScreen
 import com.sniffsub.sniff_sub_player.settings.SettingsActions
 import com.sniffsub.sniff_sub_player.settings.SettingsScreen
 import com.sniffsub.sniff_sub_player.ui.theme.SniffSubPlayerTheme
+import com.sniffsub.sniff_sub_player.updates.AndroidAppUpdateDialog
+import com.sniffsub.sniff_sub_player.updates.UpdateStage
 
 class MainActivity : ComponentActivity() {
     private val appContainer: AppContainer
@@ -97,6 +99,8 @@ private fun SniffSubPlayerApp(
         initial = AppPreferences(),
     )
     val adBlockState by container.adBlockRepository.state.collectAsState()
+    val updateState by container.appUpdateManager.state.collectAsState()
+    var showUpdateDialog by remember { mutableStateOf(false) }
     val webViewController = rememberBrowserWebViewController()
     val messageController = remember { UiMessageController() }
     val globalMessage by messageController.message.collectAsState()
@@ -119,6 +123,10 @@ private fun SniffSubPlayerApp(
         )))
     }
     var selectedCandidate by remember { mutableStateOf<MediaCandidate?>(null) }
+
+    LaunchedEffect(currentRoute) {
+        if (currentRoute != SETTINGS_ROUTE) showUpdateDialog = false
+    }
 
     LaunchedEffect(container.adBlockRepository, actionExecutor) {
         actionExecutor.execute("广告拦截设置加载失败") {
@@ -179,6 +187,13 @@ private fun SniffSubPlayerApp(
                             preferences = preferences,
                             showBack = false,
                             bottomContentPadding = 96.dp,
+                            updateSummary = when (updateState.stage) {
+                                UpdateStage.CHECKING -> "检查中…"
+                                UpdateStage.DOWNLOADING -> "正在下载"
+                                UpdateStage.VERIFYING -> "正在校验"
+                                UpdateStage.READY -> "更新已就绪"
+                                else -> BuildIdentity.displayVersion
+                            },
                             actions = SettingsActions(
                                 onBack = { navController.popBackStack() },
                                 onUserAgentSelected = { value ->
@@ -200,6 +215,10 @@ private fun SniffSubPlayerApp(
                                 },
                                 onOpenBookmarks = { navController.navigate(BOOKMARKS_ROUTE) },
                                 onOpenAdBlock = { navController.navigate(AD_BLOCK_ROUTE) },
+                                onCheckForUpdates = {
+                                    showUpdateDialog = true
+                                    container.appUpdateManager.check()
+                                },
                             ),
                         )
                     }
@@ -347,6 +366,15 @@ private fun SniffSubPlayerApp(
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = if (currentRoute == PLAYER_ROUTE) 16.dp else 96.dp),
         )
+        if (showUpdateDialog && currentRoute == SETTINGS_ROUTE) {
+            AndroidAppUpdateDialog(
+                state = updateState,
+                currentVersion = BuildIdentity.displayVersion,
+                manager = container.appUpdateManager,
+                verifier = container.appUpdateVerifier,
+                onDismiss = { showUpdateDialog = false },
+            )
+        }
     }
 }
 

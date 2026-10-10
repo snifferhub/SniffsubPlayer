@@ -38,6 +38,19 @@ class SettingsScreenTest {
     val compose = createComposeRule()
 
     @Test
+    fun settings_update_row_dispatches_manual_check() {
+        var checked = false
+        compose.setContent {
+            SettingsScreen(
+                preferences = AppPreferences(),
+                actions = noOpSettingsActions().copy(onCheckForUpdates = { checked = true }),
+            )
+        }
+        compose.onNodeWithTag("check_update_row").performScrollTo().performClick()
+        assertTrue(checked)
+    }
+
+    @Test
     fun settings_selects_exact_user_agent_and_accent_and_opens_bookmarks() {
         var selectedUserAgent: String? = null
         var selectedAccent: Long? = null
