@@ -27,6 +27,8 @@
 
 下载使用系统 DownloadManager，文件存放在应用专属目录，不需要存储权限；关闭弹窗仍继续下载，应用重新打开后恢复任务并重新校验。安装被取消或文件被清理时，可以再次安装或重新下载。此功能加入前的旧包需要手动安装一次新包，此后可在设置中检查更新。
 
+更新包固定保存在 `getExternalFilesDir(null)/updates/update.apk`，主用户通常对应 `/storage/emulated/0/Android/data/com.sniffsub.sniff_sub_player/files/updates/update.apk`，不在公共 Download 目录。每次下载前删除旧包，不按版本累积；取消、下载失败或校验失败时清理文件与下载记录。升级成功后，新版首次启动会清理已经安装的更新包；取消系统安装时保留一份，以便再次安装。
+
 CI 将运行编号写入 `BuildConfig.RELEASE_BUILD_NUMBER`，发布包 `versionCode = 10000 + 运行编号`，以区分同一 `versionName` 的不同构建。更新检查按版本号及构建编号比较；今后须维持该工作流运行编号递增，避免重置后产生版本号回退。
 
 ## 原生目录
@@ -64,6 +66,8 @@ APK 编译、签名和发布通过 GitHub Actions 完成，不在本地组装 AP
 3. 创建 `android-v<版本>-build.<运行编号>` GitHub Release，并附带 SHA-256 校验文件。
 
 流水线只负责编译和发布，不运行自动化测试；真机功能由维护者自行验证。
+
+每次发布前更新 `release-notes/android.md`，简要说明本版用户能感受到的改动。私有与公开 Release 均使用此文件作为更新说明，应用的更新弹窗直接读取公开 Release 正文。只需纠正已发布版本的说明时，可以编辑 Release 正文，无需重新构建 APK。
 
 流水线要求配置正式签名。请在 GitHub 仓库的 Actions Secrets 中配置：
 

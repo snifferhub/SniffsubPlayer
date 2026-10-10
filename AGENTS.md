@@ -23,3 +23,11 @@
 
 - Flutter files remain historical compatibility material and are not the Android implementation source.
 - New Android features must be implemented in the native Kotlin/Compose app.
+
+## Android release notes
+
+- Before every Android release, update `release-notes/android.md` in the same commit as the changes with a brief Chinese summary for users: visible improvements, behavior changes, and fixes.
+- Describe this release's changes; do not reuse the previous release's summary or expose private source links, credentials, or internal implementation details.
+- Distinguish code fixes from real-device confirmation; do not claim a reported device issue is resolved before it is verified.
+- Both private and public APK releases must use this file as their Release body. The app's update dialog reads the public Release body.
+- If the maintainer requests skipping CI, use `[skip ci]` in the commit message and do not manually dispatch a build. Existing Release text can be corrected without rebuilding an APK.

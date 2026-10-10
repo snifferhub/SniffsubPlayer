@@ -72,11 +72,12 @@ jobs:
         run: |
           APP_VERSION="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)"
           test -n "$APP_VERSION"
+          test -s release-notes/android.md
           RELEASE_TAG="android-v${APP_VERSION}-build.${GITHUB_RUN_NUMBER}"
           gh release create "$RELEASE_TAG" dist/* \
             --target "$GITHUB_SHA" \
             --title "SniffSubPlayer Android ${APP_VERSION} (build ${GITHUB_RUN_NUMBER})" \
-            --generate-notes \
+            --notes-file release-notes/android.md \
             --latest
 
       - name: Sync signed APK to public update repository
@@ -90,6 +91,7 @@ jobs:
           git checkout -b packages
           mkdir -p distribution
           cp "$GITHUB_WORKSPACE/dist/SniffSubPlayer-Android.apk" distribution/
+          cp "$GITHUB_WORKSPACE/release-notes/android.md" distribution/release-notes.md
           (cd distribution && sha256sum SniffSubPlayer-Android.apk > SHA256SUMS.txt)
           python3 - <<'PY'
           import json, os, re
@@ -98,8 +100,6 @@ jobs:
           version = re.search(r'versionName = "([^"]+)"', source).group(1)
           tag = f"android-v{version}-build.{os.environ['GITHUB_RUN_NUMBER']}"
           Path('distribution/release.json').write_text(json.dumps({'tag': tag}))
-          Path('distribution/release-notes.md').write_text(
-              f'Signed Android release {tag}.\n\nUse Settings → Check for updates inside the app.\n')
           PY
           git config user.name 'SniffSubPlayer release bot'
           git config user.email 'noreply@snifferhub.dev'
