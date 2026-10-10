@@ -3,6 +3,7 @@ package com.sniffsub.sniff_sub_player.browser
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.view.View
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
@@ -13,12 +14,16 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.sniffsub.sniff_sub_player.adblock.AdBlockRepository
 import com.sniffsub.sniff_sub_player.adblock.AdRequest
 import com.sniffsub.sniff_sub_player.adblock.ResourceType
@@ -31,11 +36,33 @@ import java.util.WeakHashMap
 class BrowserWebViewController internal constructor() {
     private val webViewSlot = BrowserWebViewReleaseCoordinator<WebView>()
     private val sniffRequests = WeakHashMap<WebView, Long>()
+    private val activeViews = WeakHashMap<WebView, Boolean>()
+    private var active = false
+
+    internal fun setActive(value: Boolean) {
+        active = value
+        webViewSlot.withAttached(::applyActiveState)
+    }
+
+    private fun applyActiveState(view: WebView) {
+        if (activeViews[view] == active) return
+        activeViews[view] = active
+        view.visibility = if (active) View.VISIBLE else View.INVISIBLE
+        if (active) {
+            view.onResume()
+        } else {
+            view.clearFocus()
+            view.onPause()
+        }
+        // onPause does not stop JS. Suspend only our scanner, not every WebView's timers.
+        view.evaluateJavascript("if (window.__sniffSubPlayerSetActive) window.__sniffSubPlayerSetActive($active);", null)
+    }
 
     internal fun applySnifferScript(view: WebView, revision: Long, script: String) {
         if (sniffRequests[view] == revision) return
         sniffRequests[view] = revision
         view.evaluateJavascript(script, null)
+        view.evaluateJavascript("if (window.__sniffSubPlayerSetActive) window.__sniffSubPlayerSetActive($active);", null)
     }
 
     private val cosmeticScripts = WeakHashMap<WebView, String>()
@@ -64,6 +91,7 @@ class BrowserWebViewController internal constructor() {
 
     internal fun attach(view: WebView) {
         webViewSlot.attach(view)
+        applyActiveState(view)
     }
 
     internal fun release(view: WebView) {
@@ -130,7 +158,20 @@ fun BrowserWebView(
     adBlockRepository: AdBlockRepository,
     modifier: Modifier = Modifier,
     controller: BrowserWebViewController = rememberBrowserWebViewController(),
+    isActive: Boolean = true,
 ) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(controller, lifecycle, isActive) {
+        val observer = LifecycleEventObserver { _, _ ->
+            controller.setActive(isActive && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+        }
+        lifecycle.addObserver(observer)
+        controller.setActive(isActive && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+        onDispose {
+            lifecycle.removeObserver(observer)
+            controller.setActive(false)
+        }
+    }
     val adBlockState by adBlockRepository.state.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val defaultUserAgent = remember(context) { WebSettings.getDefaultUserAgent(context) }
@@ -173,7 +214,7 @@ fun BrowserWebView(
                 }
                 // Observe the repository so toggles/updates also remove or replace existing CSS.
                 controller.applyCosmeticScript(webView, cosmeticScript)
-                if (state.snifferEnabled) {
+                if (isActive && state.snifferEnabled) {
                     if (snifferScript == null) {
                         viewModel.setTransientMessage("嗅探脚本读取失败")
                     } else {
@@ -307,7 +348,9 @@ private class SniffJavascriptBridge(
     @JavascriptInterface
     fun report(json: String) {
         if (json.length > MAXIMUM_BRIDGE_MESSAGE_LENGTH) return
-        webView.post { reportPayload(json) }
+        webView.post {
+            if (webView.visibility == View.VISIBLE) reportPayload(json)
+        }
     }
 }
 

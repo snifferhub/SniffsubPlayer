@@ -6,6 +6,7 @@
   window.__sniffSubPlayerInstalled = true;
 
   const seen = new Set();
+  let active = true;
   const pattern = /(\.(m3u8|mp4|m4v|mov|mpd|m4s|ts|aac)(?=([?#/&]|$))|^blob:)/i;
 
   const inputUrl = (input) => {
@@ -27,6 +28,7 @@
   };
 
   const report = (url, source) => {
+    if (!active) return;
     const value = absolute(url);
     if (!value || !pattern.test(value) || seen.has(value)) return;
     if (seen.size >= 2000) seen.clear();
@@ -64,6 +66,7 @@
   };
 
   const scan = () => {
+    if (!active) return;
     document.querySelectorAll('video, source, a').forEach((element) => {
       report(
         element.currentSrc || element.src || element.href,
@@ -89,6 +92,18 @@
   window.__sniffSubPlayerRescan = () => {
     seen.clear();
     scan();
+  };
+
+  window.__sniffSubPlayerSetActive = (value) => {
+    if (active === value) return;
+    active = value;
+    if (active) {
+      scan();
+      window.__sniffSubPlayerTimer = setInterval(scan, 1200);
+    } else {
+      clearInterval(window.__sniffSubPlayerTimer);
+      window.__sniffSubPlayerTimer = null;
+    }
   };
 
   scan();

@@ -303,6 +303,7 @@ fun PlayerScreen(
 }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 private fun PlayerControls(
     isPlaying: Boolean,
     currentPositionMs: Long,
@@ -417,6 +418,19 @@ private fun PlayerControls(
                 modifier = Modifier.width(58.dp),
             )
             Slider(
+                thumb = {},
+                track = { sliderState ->
+                    SliderDefaults.Track(
+                        sliderState = sliderState,
+                        enabled = durationMs > 0,
+                        colors = SliderDefaults.colors(
+                            activeTrackColor = PlayerAccent,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.35f),
+                        ),
+                        thumbTrackGapSize = 0.dp,
+                        drawStopIndicator = null,
+                    )
+                },
                 value = currentPositionMs.coerceIn(0L, max(1L, durationMs)).toFloat(),
                 onValueChange = { onScrub(it.toLong()) },
                 onValueChangeFinished = onScrubFinished,

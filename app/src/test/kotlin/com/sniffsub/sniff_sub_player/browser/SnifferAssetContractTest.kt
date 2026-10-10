@@ -47,6 +47,7 @@ class SnifferAssetContractTest {
             const reports = [];
             let fetchCall = 0;
             let timerCalls = 0;
+            let clearCalls = 0;
 
             class FakeRequest {
               constructor(input) {
@@ -73,6 +74,7 @@ class SnifferAssetContractTest {
               },
               performance: { getEntriesByType: () => [] },
               setInterval: () => { timerCalls++; return 1; },
+              clearInterval: () => { clearCalls++; },
               SniffBridge: {
                 report: (json) => reports.push(JSON.parse(json)),
               },
@@ -116,6 +118,20 @@ class SnifferAssetContractTest {
               vm.runInContext(script, sandbox);
               assert.strictEqual(reports.length, 8);
               assert.strictEqual(timerCalls, 1);
+              sandbox.__sniffSubPlayerSetActive(false);
+              sandbox.__sniffSubPlayerSetActive(false);
+              assert.strictEqual(clearCalls, 1);
+              const pausedReports = reports.length;
+              await sandbox.fetch('paused.mp4');
+              sandbox.__sniffSubPlayerRescan();
+              assert.strictEqual(reports.length, pausedReports);
+              assert.strictEqual(sandbox.__sniffSubPlayerTimer, null);
+              sandbox.__sniffSubPlayerSetActive(true);
+              sandbox.__sniffSubPlayerSetActive(true);
+              assert.strictEqual(timerCalls, 2);
+              assert.strictEqual(sandbox.fetch, installedFetch);
+              await sandbox.fetch('resumed.mp4');
+              assert.strictEqual(reports[reports.length - 1].url, 'https://page.test/resumed.mp4');
             })().catch((error) => {
               console.error(error.stack || error);
               process.exit(1);

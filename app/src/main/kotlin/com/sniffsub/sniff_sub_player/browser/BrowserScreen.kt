@@ -5,6 +5,7 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -19,6 +20,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.Surface
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -38,7 +48,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -99,6 +109,7 @@ fun BrowserScreen(
     val snackbarScope = rememberCoroutineScope()
     val browserFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val currentUrl = state.currentPageUrl.ifBlank { state.address }.trim()
     val isBookmarked = state.bookmarks.any { it.url == currentUrl }
 
@@ -133,38 +144,23 @@ fun BrowserScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
-            TopAppBar(
-                modifier = Modifier.testTag("address_row"),
-                title = {
-                    OutlinedTextField(
-                        value = addressText,
-                        onValueChange = { addressText = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onFocusChanged { addressFocused = it.isFocused }
-                            .testTag("address_field"),
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        placeholder = { Text("输入网址或搜索", maxLines = 1) },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(onGo = { submitAddress() }),
-                        trailingIcon = {
-                            IconButton(
-                                onClick = ::submitAddress,
-                                modifier = Modifier.testTag("submit_address_button"),
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前往")
-                            }
-                        },
-                    )
-                },
-                navigationIcon = {
+            Surface {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                        .testTag("address_row")
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Equal side slots keep the field centered in both editing modes.
                     AnimatedVisibility(
                         visible = !addressFocused,
                         enter = fadeIn() + expandHorizontally(expandFrom = Alignment.Start),
                         exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.Start),
                     ) {
-                        Row {
+                        Row(Modifier.width(96.dp)) {
                             IconButton(
                                 onClick = actions.onBack,
                                 enabled = state.canGoBack,
@@ -181,23 +177,47 @@ fun BrowserScreen(
                             }
                         }
                     }
-                },
-                actions = {
-                    AnimatedVisibility(visible = !addressFocused) {
-                        IconButton(
-                            onClick = actions.onToggleBookmark,
-                            enabled = currentUrl.isNotEmpty(),
-                            modifier = Modifier.testTag("bookmark_button"),
-                        ) {
-                            Icon(
-                                imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                contentDescription = if (isBookmarked) "取消收藏" else "收藏",
-                            )
+                    OutlinedTextField(
+                        value = addressText,
+                        onValueChange = { addressText = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .onFocusChanged { addressFocused = it.isFocused }
+                            .testTag("address_field"),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        placeholder = { Text("输入网址或搜索", maxLines = 1) },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                        keyboardActions = KeyboardActions(onGo = { submitAddress() }),
+                        trailingIcon = {
+                            IconButton(
+                                onClick = ::submitAddress,
+                                modifier = Modifier.testTag("submit_address_button"),
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前往")
+                            }
+                        },
+                    )
+                    AnimatedVisibility(
+                        visible = !addressFocused,
+                        enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
+                        exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End),
+                    ) {
+                        Row(Modifier.width(96.dp), horizontalArrangement = Arrangement.End) {
+                            IconButton(
+                                onClick = actions.onToggleBookmark,
+                                enabled = currentUrl.isNotEmpty(),
+                                modifier = Modifier.testTag("bookmark_button"),
+                            ) {
+                                Icon(
+                                    imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                    contentDescription = if (isBookmarked) "取消收藏" else "收藏",
+                                )
+                            }
                         }
                     }
-
-                },
-            )
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
@@ -222,6 +242,8 @@ fun BrowserScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    // Keep native hit targets out from underneath the Compose dock.
+                    .padding(bottom = if (keyboardVisible) 0.dp else 88.dp)
                     .focusRequester(browserFocusRequester)
                     .focusable()
                     .testTag("browser_webview"),

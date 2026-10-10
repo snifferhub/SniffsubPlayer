@@ -38,6 +38,22 @@ class BrowserScreenTest {
     }
 
     @Test
+    fun address_field_is_centered_with_and_without_keyboard_focus() {
+        compose.setContent {
+            BrowserScreen(state = sampleState(), actions = noOpActions())
+        }
+        fun assertCentered() {
+            val row = compose.onNodeWithTag("address_row").fetchSemanticsNode().boundsInRoot
+            val field = compose.onNodeWithTag("address_field").fetchSemanticsNode().boundsInRoot
+            assertEquals(row.center.x, field.center.x, 1f)
+            org.junit.Assert.assertTrue(field.left > row.left && field.right < row.right)
+        }
+        assertCentered()
+        compose.onNodeWithTag("address_field").performClick()
+        assertCentered()
+    }
+
+    @Test
     fun chrome_keeps_expected_controls_and_enabled_states() {
         compose.setContent {
             BrowserScreen(
