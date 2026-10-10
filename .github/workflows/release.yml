@@ -80,9 +80,20 @@ jobs:
             --notes-file release-notes/android.md \
             --latest
 
+      - name: Create repository-scoped release bot token
+        id: android_updates_bot
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.ANDROID_UPDATES_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ANDROID_UPDATES_APP_PRIVATE_KEY }}
+          owner: snifferhub
+          repositories: SniffSubPlayer-Android-Releases
+          permission-contents: write
+
       - name: Sync signed APK to public update repository
         env:
-          GH_TOKEN: ${{ secrets.ANDROID_UPDATES_PUBLISH_TOKEN }}
+          GH_TOKEN: ${{ steps.android_updates_bot.outputs.token }}
+          RELEASE_BOT_LOGIN: ${{ steps.android_updates_bot.outputs.app-slug }}[bot]
         run: |
           test -n "$GH_TOKEN"
           gh auth setup-git
@@ -101,8 +112,13 @@ jobs:
           tag = f"android-v{version}-build.{os.environ['GITHUB_RUN_NUMBER']}"
           Path('distribution/release.json').write_text(json.dumps({'tag': tag}))
           PY
-          git config user.name 'SniffSubPlayer release bot'
-          git config user.email 'noreply@snifferhub.dev'
+          RELEASE_BOT_ID="$(gh api "/users/$RELEASE_BOT_LOGIN" --jq .id)"
+          export GIT_AUTHOR_NAME="$RELEASE_BOT_LOGIN"
+          export GIT_COMMITTER_NAME="$RELEASE_BOT_LOGIN"
+          export GIT_AUTHOR_EMAIL="$RELEASE_BOT_ID+$RELEASE_BOT_LOGIN@users.noreply.github.com"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          git config user.name "$GIT_AUTHOR_NAME"
+          git config user.email "$GIT_AUTHOR_EMAIL"
           git add README.md .github/workflows/publish.yml distribution
           git commit -m "chore(release): distribute Android build $GITHUB_RUN_NUMBER"
           # This newly created repository's packages branch is a disposable APK snapshot.

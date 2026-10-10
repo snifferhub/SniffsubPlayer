@@ -62,7 +62,9 @@ APK 编译、签名和发布通过 GitHub Actions 完成，不在本地组装 AP
 
 ## 自动发布
 
-源码仓库保持私有；公开更新仓库只保存签名 APK、版本信息、校验文件与发布工作流。私有 CI 使用存放在 Actions Secret 中的 `ANDROID_UPDATES_PUBLISH_TOKEN` 推送安装包快照（建议使用仅限公开仓库 Contents 读写权限的专用 Token），公开仓库自己的工作流使用其 `GITHUB_TOKEN` 创建 Release。APK 不包含访问私有仓库的 Token。
+源码仓库保持私有；公开更新仓库只保存签名 APK、版本信息、校验文件与发布工作流。私有 CI 使用组织所属 GitHub App 的短期安装 Token 推送安装包快照，提交的作者、提交者及推送认证均使用 bot 身份；公开仓库自己的工作流使用其 `GITHUB_TOKEN` 创建 Release。APK 不包含访问私有仓库的凭据。
+
+发布 bot 仅安装到 `SniffSubPlayer-Android-Releases`，授予 Contents 读写和自动附带的 Metadata 只读权限，不授权私有源码仓库。源码仓库的 Actions Variable `ANDROID_UPDATES_APP_CLIENT_ID` 保存 App Client ID，Actions Secret `ANDROID_UPDATES_APP_PRIVATE_KEY` 保存私钥；工作流生成只针对公开更新仓库、有效期一小时的 Token，任务结束后撤销。请完成 App 安装和变量/Secret 配置后再启用此流程，不再使用个人 PAT 推送公开快照。
 
 
 每次推送 Android 发布分支后，[Build and Release](.github/workflows/release.yml) 可自动：
