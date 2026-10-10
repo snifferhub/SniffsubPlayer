@@ -10,7 +10,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -49,8 +48,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -110,6 +109,25 @@ fun PlayerScreen(
         createPlayer(context, candidate)
     }
     val attachedView = remember(player) { arrayOfNulls<PlayerView>(1) }
+    val temporarySpeed = remember(player) {
+        TemporaryPlaybackSpeed({ player.playbackParameters }, { player.playbackParameters = it })
+    }
+    var seekSession by remember(player) { mutableStateOf<HorizontalSeekSession?>(null) }
+    var holdingSpeed by remember(player) { mutableStateOf(false) }
+    var gesturesEnabled by remember(lifecycle) {
+        mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+
+    fun stopHoldingSpeed() {
+        temporarySpeed.stop()
+        holdingSpeed = false
+    }
+
+    fun cancelGestures() {
+        stopHoldingSpeed()
+        if (seekSession != null) scrubPositionMs = null
+        seekSession = null
+    }
 
     fun keepControlsVisible() {
         controlsVisible = true
@@ -126,6 +144,8 @@ fun PlayerScreen(
     }
 
     fun exitPlayback() {
+        gesturesEnabled = false
+        cancelGestures()
         attachedView[0]?.player = null
         attachedView[0]?.keepScreenOn = false
         player.pause()
@@ -158,6 +178,7 @@ fun PlayerScreen(
 
     DisposableEffect(player) {
         onDispose {
+            temporarySpeed.stop()
             attachedView[0]?.player = null
             attachedView[0]?.keepScreenOn = false
             player.playWhenReady = false
@@ -169,6 +190,12 @@ fun PlayerScreen(
     DisposableEffect(player, lifecycle) {
         var resumePlayback = false
         val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                gesturesEnabled = false
+                cancelGestures()
+            } else if (event == Lifecycle.Event.ON_RESUME) {
+                gesturesEnabled = true
+            }
             if (event == Lifecycle.Event.ON_STOP) {
                 resumePlayback = player.playWhenReady
                 player.pause()
@@ -195,8 +222,8 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(controlsVisible, interactionRevision, isPlaying) {
-        if (controlsVisible && isPlaying) {
+    LaunchedEffect(controlsVisible, interactionRevision, isPlaying, seekSession, holdingSpeed) {
+        if (controlsVisible && isPlaying && seekSession == null && !holdingSpeed) {
             delay(3_000)
             controlsVisible = false
         }
@@ -251,20 +278,46 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize(),
         )
 
-        Box(
+        PlayerGestureSurface(
+            enabled = gesturesEnabled,
+            onTap = {
+                controlsVisible = !controlsVisible
+                if (controlsVisible) interactionRevision += 1
+            },
+            onDoubleTap = { forward -> seekBy(if (forward) 10_000L else -10_000L) },
+            onSeekStart = {
+                val seekDuration = player.duration
+                if (player.isCurrentMediaItemSeekable && seekDuration > 0L) {
+                    seekSession = HorizontalSeekSession(player.currentPosition, seekDuration)
+                    scrubPositionMs = seekSession?.targetPositionMs
+                    keepControlsVisible()
+                    true
+                } else {
+                    false
+                }
+            },
+            onSeekDelta = { delta, width ->
+                scrubPositionMs = seekSession?.dragBy(delta, width)
+            },
+            onSeekFinish = { commit ->
+                if (commit) seekSession?.let { session ->
+                    player.seekTo(session.targetPositionMs)
+                    currentPositionMs = session.targetPositionMs
+                }
+                seekSession = null
+                scrubPositionMs = null
+                keepControlsVisible()
+            },
+            onHoldStart = {
+                if (player.playWhenReady && player.playbackState != Player.STATE_ENDED) {
+                    temporarySpeed.start()
+                    holdingSpeed = true
+                }
+            },
+            onHoldEnd = ::stopHoldingSpeed,
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(player) {
-                    detectTapGestures(
-                        onTap = {
-                            controlsVisible = !controlsVisible
-                            if (controlsVisible) interactionRevision += 1
-                        },
-                        onDoubleTap = { offset ->
-                            seekBy(if (offset.x < size.width / 2f) -10_000L else 10_000L)
-                        },
-                    )
-                },
+                .testTag("player_gesture_surface"),
         )
 
         if (currentSubtitle.isNotBlank()) {
@@ -295,6 +348,7 @@ fun PlayerScreen(
                 hasSubtitles = cues.isNotEmpty(),
                 onClose = ::exitPlayback,
                 onSubtitles = {
+                    cancelGestures()
                     keepControlsVisible()
                     showSubtitleSearch = true
                 },
@@ -326,7 +380,7 @@ fun PlayerScreen(
         }
 
         AnimatedVisibility(
-            visible = feedbackVisible,
+            visible = feedbackVisible || seekSession != null || holdingSpeed,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.Center),
@@ -337,7 +391,11 @@ fun PlayerScreen(
                 shape = RoundedCornerShape(50),
             ) {
                 Text(
-                    text = feedbackText,
+                    text = when {
+                        seekSession != null -> "定位 ${formatPlayerTime(scrubPositionMs ?: currentPositionMs)} / ${formatPlayerTime(durationMs)}"
+                        holdingSpeed -> "2× 快速播放 · 松手恢复"
+                        else -> feedbackText
+                    },
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
                 )
