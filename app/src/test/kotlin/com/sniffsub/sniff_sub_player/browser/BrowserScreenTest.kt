@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.dp
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -38,19 +39,29 @@ class BrowserScreenTest {
     }
 
     @Test
-    fun address_field_is_centered_with_and_without_keyboard_focus() {
+    fun toolbar_is_compact_and_address_is_centered_only_when_editing() {
         compose.setContent {
             BrowserScreen(state = sampleState(), actions = noOpActions())
         }
-        fun assertCentered() {
-            val row = compose.onNodeWithTag("address_row").fetchSemanticsNode().boundsInRoot
+        fun assertCompact() {
             val field = compose.onNodeWithTag("address_field").fetchSemanticsNode().boundsInRoot
-            assertEquals(row.center.x, field.center.x, 1f)
-            org.junit.Assert.assertTrue(field.left > row.left && field.right < row.right)
+            val forward = compose.onNodeWithTag("forward_button").fetchSemanticsNode().boundsInRoot
+            val bookmark = compose.onNodeWithTag("bookmark_button").fetchSemanticsNode().boundsInRoot
+            // Icon semantics can exclude their small built-in touch padding.
+            val maximumGap = with(compose.density) { 8.dp.toPx() }
+            org.junit.Assert.assertTrue(field.left - forward.right in 0f..maximumGap)
+            org.junit.Assert.assertTrue(bookmark.left - field.right in 0f..maximumGap)
         }
-        assertCentered()
+        assertCompact()
+        val compactWidth = compose.onNodeWithTag("address_field").fetchSemanticsNode().boundsInRoot.width
         compose.onNodeWithTag("address_field").performClick()
-        assertCentered()
+        val row = compose.onNodeWithTag("address_row").fetchSemanticsNode().boundsInRoot
+        val field = compose.onNodeWithTag("address_field").fetchSemanticsNode().boundsInRoot
+        assertEquals(row.center.x, field.center.x, 1f)
+        org.junit.Assert.assertTrue(field.left > row.left && field.right < row.right)
+        org.junit.Assert.assertTrue(field.width > compactWidth)
+        compose.onNodeWithTag("address_field").performImeAction()
+        assertCompact()
     }
 
     @Test

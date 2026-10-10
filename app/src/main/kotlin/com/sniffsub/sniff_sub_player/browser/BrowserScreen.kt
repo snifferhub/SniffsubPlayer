@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -154,7 +153,7 @@ fun BrowserScreen(
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Equal side slots keep the field centered in both editing modes.
+                    // Keep the toolbar compact; editing hides the side buttons and uses equal margins.
                     AnimatedVisibility(
                         visible = !addressFocused,
                         enter = fadeIn() + expandHorizontally(expandFrom = Alignment.Start),
@@ -203,17 +202,15 @@ fun BrowserScreen(
                         enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
                         exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End),
                     ) {
-                        Row(Modifier.width(96.dp), horizontalArrangement = Arrangement.End) {
-                            IconButton(
-                                onClick = actions.onToggleBookmark,
-                                enabled = currentUrl.isNotEmpty(),
-                                modifier = Modifier.testTag("bookmark_button"),
-                            ) {
-                                Icon(
-                                    imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                    contentDescription = if (isBookmarked) "取消收藏" else "收藏",
-                                )
-                            }
+                        IconButton(
+                            onClick = actions.onToggleBookmark,
+                            enabled = currentUrl.isNotEmpty(),
+                            modifier = Modifier.testTag("bookmark_button"),
+                        ) {
+                            Icon(
+                                imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = if (isBookmarked) "取消收藏" else "收藏",
+                            )
                         }
                     }
                 }
