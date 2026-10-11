@@ -45,6 +45,10 @@ class PlayerGesturesTest {
     private val speed = TemporaryPlaybackSpeed({ parameters }, { parameters = it })
     private var holds = 0
     private var buttonClicks = 0
+    private val verticalSides = mutableListOf<Boolean>()
+    private var verticalFinishes = 0
+    private var level = 0.5f
+    private var levelSession: VerticalLevelSession? = null
 
     private fun showSurface(withButton: Boolean = false) {
         compose.setContent {
@@ -67,6 +71,12 @@ class PlayerGesturesTest {
                     },
                     onHoldStart = { holds++; speed.start() },
                     onHoldEnd = { speed.stop() },
+                    onVerticalStart = {
+                        verticalSides += it
+                        levelSession = VerticalLevelSession(level, if (it) 0.25f else 0.75f)
+                    },
+                    onVerticalDelta = { delta, height -> level = levelSession!!.dragBy(delta, height) },
+                    onVerticalEnd = { verticalFinishes++ },
                     modifier = Modifier.fillMaxSize().testTag("gestures"),
                 )
                 if (withButton) Button(
@@ -172,15 +182,86 @@ class PlayerGesturesTest {
     }
 
     @Test
-    fun vertical_swipe_does_not_seek() {
+    fun vertical_swipes_adjust_the_initial_half_without_seeking_or_tapping() {
         showSurface()
         compose.onNodeWithTag("gestures").performTouchInput {
-            swipe(Offset(width / 2f, height * 0.8f), Offset(width / 2f, height * 0.2f), 250)
+            swipe(Offset(width * 0.25f, height * 0.8f), Offset(width * 0.25f, height * 0.2f), 250)
+            advanceEventTime(400)
+            swipe(Offset(width * 0.75f, height * 0.2f), Offset(width * 0.75f, height * 0.8f), 250)
         }
         compose.runOnIdle {
+            assertEquals(listOf(false, true), verticalSides)
+            assertEquals(2, verticalFinishes)
+            assertTrue(level > 0.5f)
             assertEquals(0, seekStarts)
             assertEquals(0, holds)
             assertEquals(0, taps)
+            assertTrue(doubleTaps.isEmpty())
         }
+    }
+
+    @Test
+    fun a_tap_after_scrubbing_is_not_a_double_tap_seek() {
+        showSurface()
+        compose.onNodeWithTag("gestures").performTouchInput {
+            swipe(Offset(width * 0.25f, height / 2f), Offset(width * 0.75f, height / 2f), 150)
+            advanceEventTime(60)
+            click(Offset(width * 0.75f, height / 2f))
+        }
+        compose.mainClock.advanceTimeBy(400)
+        compose.runOnIdle {
+            assertEquals(listOf(true), finishes)
+            assertEquals(1, taps)
+            assertTrue(doubleTaps.isEmpty())
+        }
+    }
+
+    @Test
+    fun a_drag_as_the_second_touch_cancels_the_pending_double_tap() {
+        showSurface()
+        compose.onNodeWithTag("gestures").performTouchInput {
+            click(Offset(width * 0.25f, height / 2f))
+            advanceEventTime(60)
+            swipe(Offset(width * 0.25f, height / 2f), Offset(width * 0.75f, height / 2f), 150)
+        }
+        compose.mainClock.advanceTimeBy(400)
+        compose.runOnIdle {
+            assertEquals(listOf(true), finishes)
+            assertEquals(0, taps)
+            assertEquals(0, holds)
+            assertTrue(doubleTaps.isEmpty())
+        }
+    }
+
+    @Test
+    fun vertical_direction_and_side_stay_locked_when_the_finger_moves_diagonally() {
+        showSurface()
+        compose.onNodeWithTag("gestures").performTouchInput {
+            down(Offset(width * 0.45f, height * 0.8f))
+            moveTo(Offset(width * 0.45f, height * 0.6f), delayMillis = 50)
+            moveTo(Offset(width * 0.75f, height * 0.3f), delayMillis = 50)
+            up()
+        }
+        compose.runOnIdle {
+            assertEquals(listOf(false), verticalSides)
+            assertEquals(1, verticalFinishes)
+            assertEquals(0, seekStarts)
+            assertEquals(0, taps)
+        }
+    }
+
+    @Test
+    fun interruption_finishes_the_vertical_adjustment_once() {
+        showSurface()
+        compose.onNodeWithTag("gestures").performTouchInput {
+            down(Offset(width * 0.75f, height * 0.8f))
+            moveTo(Offset(width * 0.75f, height * 0.3f), delayMillis = 100)
+        }
+        compose.runOnIdle { enabled.value = false }
+        compose.runOnIdle {
+            assertEquals(1, verticalFinishes)
+            assertTrue(doubleTaps.isEmpty())
+        }
+        compose.onNodeWithTag("gestures").performTouchInput { up() }
     }
 }

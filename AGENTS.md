@@ -3,6 +3,7 @@
 ## git limit
 
 - strict to the commit [principle](https://www.conventionalcommits.org/en/v1.0.0/).
+- every time you finish your code modification, generate the commit message as reference for me.
 
 ## Git authorization and CI scope
 

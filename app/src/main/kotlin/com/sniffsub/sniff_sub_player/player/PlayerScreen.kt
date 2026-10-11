@@ -78,6 +78,7 @@ import com.sniffsub.sniff_sub_player.subtitle.SubtitleSearchScreen
 import com.sniffsub.sniff_sub_player.subtitle.subtitleAt
 import kotlinx.coroutines.delay
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 private val PlayerAccent = Color(0xFFFF9FBD)
 
@@ -98,8 +99,7 @@ fun PlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var interactionRevision by remember { mutableIntStateOf(0) }
     var feedbackRevision by remember { mutableIntStateOf(0) }
-    var feedbackText by remember { mutableStateOf("") }
-    var feedbackVisible by remember { mutableStateOf(false) }
+    var feedbackText by remember { mutableStateOf<String?>(null) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var scrubPositionMs by remember { mutableStateOf<Long?>(null) }
@@ -114,6 +114,15 @@ fun PlayerScreen(
     }
     var seekSession by remember(player) { mutableStateOf<HorizontalSeekSession?>(null) }
     var holdingSpeed by remember(player) { mutableStateOf(false) }
+    val levelControls = remember(context, activity) { PlayerLevelControls(context, activity?.window) }
+    var levelSession by remember { mutableStateOf<VerticalLevelSession?>(null) }
+    var adjustingVolume by remember { mutableStateOf(false) }
+    var levelFeedback by remember { mutableStateOf<String?>(null) }
+
+    fun clearFeedback() {
+        feedbackText = null
+        feedbackRevision += 1
+    }
     var gesturesEnabled by remember(lifecycle) {
         mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
     }
@@ -127,6 +136,9 @@ fun PlayerScreen(
         stopHoldingSpeed()
         if (seekSession != null) scrubPositionMs = null
         seekSession = null
+        levelSession = null
+        levelFeedback = null
+        clearFeedback()
     }
 
     fun keepControlsVisible() {
@@ -176,6 +188,10 @@ fun PlayerScreen(
         }
     }
 
+    DisposableEffect(levelControls) {
+        onDispose { levelControls.restoreBrightness() }
+    }
+
     DisposableEffect(player) {
         onDispose {
             temporarySpeed.stop()
@@ -222,18 +238,17 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(controlsVisible, interactionRevision, isPlaying, seekSession, holdingSpeed) {
-        if (controlsVisible && isPlaying && seekSession == null && !holdingSpeed) {
+    LaunchedEffect(controlsVisible, interactionRevision, isPlaying, seekSession, holdingSpeed, levelSession) {
+        if (controlsVisible && isPlaying && seekSession == null && !holdingSpeed && levelSession == null) {
             delay(3_000)
             controlsVisible = false
         }
     }
 
-    LaunchedEffect(feedbackRevision) {
-        if (feedbackRevision > 0) {
-            feedbackVisible = true
+    LaunchedEffect(feedbackText, feedbackRevision) {
+        if (feedbackText != null) {
             delay(750)
-            feedbackVisible = false
+            feedbackText = null
         }
     }
 
@@ -286,6 +301,7 @@ fun PlayerScreen(
             },
             onDoubleTap = { forward -> seekBy(if (forward) 10_000L else -10_000L) },
             onSeekStart = {
+                clearFeedback()
                 val seekDuration = player.duration
                 if (player.isCurrentMediaItemSeekable && seekDuration > 0L) {
                     seekSession = HorizontalSeekSession(player.currentPosition, seekDuration)
@@ -309,12 +325,40 @@ fun PlayerScreen(
                 keepControlsVisible()
             },
             onHoldStart = {
+                clearFeedback()
                 if (player.playWhenReady && player.playbackState != Player.STATE_ENDED) {
                     temporarySpeed.start()
                     holdingSpeed = true
                 }
             },
             onHoldEnd = ::stopHoldingSpeed,
+            onVerticalStart = { rightHalf ->
+                clearFeedback()
+                adjustingVolume = rightHalf
+                levelSession = VerticalLevelSession(
+                    startLevel = if (rightHalf) levelControls.volume else levelControls.brightness,
+                    rangePerScreen = if (rightHalf) 0.25f else 0.75f,
+                    minimum = if (rightHalf) 0f else 0.02f,
+                )
+            },
+            onVerticalDelta = { delta, height ->
+                levelSession?.dragBy(delta, height)?.let { level ->
+                    if (adjustingVolume) {
+                        levelControls.volume = level
+                        levelFeedback = "音量 ${(levelControls.volume * 100).roundToInt()}%"
+                    } else {
+                        levelControls.brightness = level
+                        levelFeedback = "亮度 ${(levelControls.brightness * 100).roundToInt()}%"
+                    }
+                }
+            },
+            onVerticalEnd = {
+                levelSession = null
+                feedbackText = levelFeedback
+                feedbackRevision += 1
+                levelFeedback = null
+                interactionRevision += 1
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("player_gesture_surface"),
@@ -365,6 +409,7 @@ fun PlayerScreen(
                 },
                 onSeekForward = { seekBy(10_000L) },
                 onScrub = {
+                    clearFeedback()
                     scrubPositionMs = it
                     keepControlsVisible()
                 },
@@ -380,27 +425,43 @@ fun PlayerScreen(
         }
 
         AnimatedVisibility(
-            visible = feedbackVisible || seekSession != null || holdingSpeed,
+            visible = feedbackText != null || seekSession != null || levelFeedback != null,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.Center),
         ) {
-            Surface(
-                color = Color.Black.copy(alpha = 0.68f),
-                contentColor = Color.White,
-                shape = RoundedCornerShape(50),
-            ) {
-                Text(
-                    text = when {
-                        seekSession != null -> "定位 ${formatPlayerTime(scrubPositionMs ?: currentPositionMs)} / ${formatPlayerTime(durationMs)}"
-                        holdingSpeed -> "2× 快速播放 · 松手恢复"
-                        else -> feedbackText
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
-                )
-            }
+            PlayerFeedbackBubble(
+                text = when {
+                    seekSession != null -> "定位 ${formatPlayerTime(scrubPositionMs ?: currentPositionMs)} / ${formatPlayerTime(durationMs)}"
+                    levelFeedback != null -> levelFeedback.orEmpty()
+                    else -> feedbackText.orEmpty()
+                },
+            )
         }
+
+        AnimatedVisibility(
+            visible = holdingSpeed,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 64.dp),
+        ) {
+            PlayerFeedbackBubble("2× 快速播放 · 松手恢复")
+        }
+    }
+}
+
+@Composable
+private fun PlayerFeedbackBubble(text: String) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.68f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(50),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
+        )
     }
 }
 

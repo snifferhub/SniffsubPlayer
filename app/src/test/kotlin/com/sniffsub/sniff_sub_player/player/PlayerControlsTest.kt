@@ -31,6 +31,25 @@ class PlayerControlsTest {
     }
 
     @Test
+    fun volume_swipes_are_slow_accumulate_small_movements_and_reverse() {
+        val volume = VerticalLevelSession(0.5f, 0.25f)
+        assertEquals(0.75f, volume.dragBy(-400f, 400f), 0.001f)
+        assertEquals(0.5f, volume.dragBy(400f, 400f), 0.001f)
+        repeat(40) { volume.dragBy(-1f, 400f) }
+        assertEquals(0.525f, volume.dragBy(0f, 400f), 0.001f)
+        assertEquals(1f, volume.dragBy(-2_000f, 400f), 0.001f)
+        assertEquals(0f, volume.dragBy(4_000f, 400f), 0.001f)
+    }
+
+    @Test
+    fun brightness_preserves_a_visible_minimum() {
+        val brightness = VerticalLevelSession(0.5f, 0.75f, minimum = 0.02f)
+        assertEquals(0.02f, brightness.dragBy(400f, 400f), 0.001f)
+        assertEquals(0.5f, brightness.dragBy(-400f, 400f), 0.001f)
+        assertEquals(0.5f, brightness.dragBy(-400f, 0f), 0.001f)
+    }
+
+    @Test
     fun time_format_uses_minutes_until_one_hour() {
         assertEquals("00:00", formatPlayerTime(0L))
         assertEquals("01:05", formatPlayerTime(65_900L))

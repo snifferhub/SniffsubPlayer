@@ -10,6 +10,7 @@ import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -284,15 +285,13 @@ fun SubtitleSearchScreen(
                             trailingContent = {
                                 if (downloadingUrl == item.url) {
                                     CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                                } else {
-                                    TextButton(
-                                        onClick = { download(item) },
-                                        enabled = downloadingUrl == null,
-                                    ) {
-                                        Text("载入")
-                                    }
                                 }
                             },
+                            modifier = Modifier.clickable(
+                                enabled = downloadingUrl == null,
+                                onClickLabel = "载入字幕",
+                                onClick = { download(item) },
+                            ),
                         )
                         HorizontalDivider()
                     }
