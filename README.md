@@ -1,6 +1,6 @@
 # SniffSubPlayer Android
 
-这是 SniffSubPlayer 的原生 Android 分支，使用 Kotlin、Jetpack Compose、WebView 与 Media3。后续 Android 功能以这里为主，不再把 Flutter 目录作为 Android 功能实现来源。
+这是 SniffSubPlayer 的原生 Android 分支，使用 Kotlin、Jetpack Compose、WebView 与 Media3。后续只维护原生 Android 版本，应用代码统一位于 `app/`，构建入口为根目录的 Gradle 工程。
 
 ## 功能
 

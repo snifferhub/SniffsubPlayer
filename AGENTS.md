@@ -30,10 +30,10 @@
 - Real-device installation and behavioral testing are performed by the maintainer after CI artifacts are published.
 - Do not claim build or device-test success from source inspection alone; report local checks, CI compilation, and device validation separately.
 
-## Flutter boundary
+## Native Android maintenance scope
 
-- Flutter files remain historical compatibility material and are not the Android implementation source.
-- New Android features must be implemented in the native Kotlin/Compose app.
+- Maintain only the native Kotlin/Jetpack Compose application under `app/` and the root Gradle project.
+- Do not reintroduce Dart sources, Flutter package manifests, Flutter-generated state, or a nested Flutter Android project.
 
 ## Android release notes
 

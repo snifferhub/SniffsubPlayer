@@ -12,7 +12,7 @@ class VideoIdExtractorTest {
     }
 
     @Test
-    fun falls_back_to_the_flutter_path_pattern() {
+    fun falls_back_to_the_video_path_pattern() {
         assertEquals(
             "1PONDO-alpha",
             extractVideoId(listOf("https://example.com/1pondo-alpha/stream.m3u8")),
@@ -20,7 +20,7 @@ class VideoIdExtractorTest {
     }
 
     @Test
-    fun scans_values_and_patterns_in_flutter_order() {
+    fun scans_values_and_patterns_in_priority_order() {
         assertEquals(
             "ABC-123",
             extractVideoId(

@@ -19,6 +19,8 @@ local.properties
 .gradle/
 .kotlin/
 build/
+coverage/
+artifacts/
 __pycache__/
 *.pyc
 
@@ -41,13 +43,3 @@ key.properties
 # Userscript scratch exports
 *.user.js.bak
 *.user.js.tmp
-
-# Flutter / Dart generated state
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.packages
-.pub-cache/
-.pub/
-coverage/
-artifacts/
