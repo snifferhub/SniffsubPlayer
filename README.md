@@ -75,7 +75,13 @@ APK 编译、签名和发布通过 GitHub Actions 完成，不在本地组装 AP
 
 流水线只负责编译和发布，不运行自动化测试；真机功能由维护者自行验证。
 
-每次发布前更新 `release-notes/android.md`，简要说明本版用户能感受到的改动。私有与公开 Release 均使用此文件作为更新说明，应用的更新弹窗直接读取公开 Release 正文。只需纠正已发布版本的说明时，可以编辑 Release 正文，无需重新构建 APK。
+CI 使用 [git-cliff](https://git-cliff.org/) 自动整理上次公开 APK 发布以来的 commit 信息，生成更新说明，无需维护 `release-notes/android.md`，也不调用 AI。完整历史与公开 Release 决定范围，因此 `[skip ci]` 的提交、被取消的构建及未完成公开发布的改动会在下一次发布中一起收录。公开发布的标签必须存在于源码历史并属于当前构建的祖先；不满足时停止发布，避免生成错误范围的说明。首次发布收录 Android 代码历史。
+
+分类和格式由 `.github/cliff.toml` 控制，只收录 Android 生产代码、资源及构建依赖相关提交；文档、测试和 CI 等维护提交默认省略，只有维护调整的发布使用简短说明。CI Summary 展示生成结果，私有 Release 与公开仓库的 `distribution/release-notes.md` 使用同一份内容，App 继续读取公开 Release 正文。
+
+更新日志直接使用 commit 描述，不自动翻译或分析代码行为。建议使用清楚的中文 Conventional Commit 标题，例如 `fix(player): 修复拖动进度后重复出现快进提示`、`feat(player): 支持分区滑动调节亮度和音量`。生成内容不带作者、邮箱、私有源码链接及 `[skip ci]` 标记。只需纠正已发布版本的说明时，可以编辑公开 Release 正文，无需重新构建 APK。
+
+发布说明的本地回归检查：`python3 -m unittest discover -s .github/scripts -p 'test_*.py'`；提供 git-cliff 2.13.1 时还会验证实际生成结果。旧的 `release-notes/android.md` 仅保留为历史资料，不再参与发布。
 
 流水线要求配置正式签名。请在 GitHub 仓库的 Actions Secrets 中配置：
 

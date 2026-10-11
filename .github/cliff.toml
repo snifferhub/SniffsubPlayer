@@ -1,0 +1,47 @@
+# Public, user-facing notes from Android commit subjects. No AI or source links.
+[changelog]
+header = "本次更新\n\n"
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+{{ group | split(pat="_") | last }}
+
+{% for commit in commits %}
+- {% if commit.breaking %}【兼容性变更】{% endif %}{{ commit.message | split(pat="\n") | first | trim }}
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+postprocessors = [{ pattern = '\n{3,}', replace = "\n\n" }]
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = true
+filter_commits = false
+sort_commits = "oldest"
+# The workflow supplies an explicit range; unpublished tags must not split it.
+ignore_tags = ".*"
+include_paths = [
+    "app/src/main/**",
+    "app/build.gradle.kts",
+    "build.gradle.kts",
+    "settings.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+]
+commit_preprocessors = [
+    { pattern = '(?i)\s*\[(skip ci|ci skip|no ci|skip actions|actions skip)\]', replace = "" },
+    { pattern = 'https?://\S+', replace = "" },
+]
+commit_parsers = [
+    { message = '^Merge ', skip = true },
+    { message = '^feat', group = "01_新增功能" },
+    { message = '^fix', group = "02_问题修复" },
+    { message = '^perf', group = "03_性能优化" },
+    { message = '^refactor|^style', group = "04_改进" },
+    { message = '^build|^chore\(deps', group = "05_组件更新" },
+    { message = '^revert', group = "06_回退调整" },
+    { message = '^docs?|^test|^ci|^chore', skip = true },
+    { message = '.*', group = "07_其他更新" },
+]

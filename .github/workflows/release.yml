@@ -20,6 +20,33 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve changes since the last public Android release
+        id: release_range
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APP_VERSION="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$APP_VERSION"
+          gh api --paginate --slurp 'repos/snifferhub/SniffSubPlayer-Android-Releases/releases?per_page=100' > "$RUNNER_TEMP/android-releases.json"
+          python3 .github/scripts/release_notes.py range \
+            --releases "$RUNNER_TEMP/android-releases.json" \
+            --head "$GITHUB_SHA" \
+            --current-tag "android-v${APP_VERSION}-build.${GITHUB_RUN_NUMBER}"
+
+      - name: Generate Android release notes from commits
+        uses: orhun/git-cliff-action@v4.8.0
+        with:
+          version: v2.13.1
+          config: .github/cliff.toml
+          args: ${{ steps.release_range.outputs.range }}
+        env:
+          OUTPUT: ${{ runner.temp }}/android-release-notes.md
+
+      - name: Finalize and preview release notes
+        run: python3 .github/scripts/release_notes.py finalize --notes "$RUNNER_TEMP/android-release-notes.md"
 
       - name: Set up Java
         uses: actions/setup-java@v6
@@ -72,12 +99,12 @@ jobs:
         run: |
           APP_VERSION="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)"
           test -n "$APP_VERSION"
-          test -s release-notes/android.md
+          test -s "$RUNNER_TEMP/android-release-notes.md"
           RELEASE_TAG="android-v${APP_VERSION}-build.${GITHUB_RUN_NUMBER}"
           gh release create "$RELEASE_TAG" dist/* \
             --target "$GITHUB_SHA" \
             --title "SniffSubPlayer Android ${APP_VERSION} (build ${GITHUB_RUN_NUMBER})" \
-            --notes-file release-notes/android.md \
+            --notes-file "$RUNNER_TEMP/android-release-notes.md" \
             --latest
 
       - name: Create repository-scoped release bot token
@@ -102,7 +129,7 @@ jobs:
           git checkout -b packages
           mkdir -p distribution
           cp "$GITHUB_WORKSPACE/dist/SniffSubPlayer-Android.apk" distribution/
-          cp "$GITHUB_WORKSPACE/release-notes/android.md" distribution/release-notes.md
+          cp "$RUNNER_TEMP/android-release-notes.md" distribution/release-notes.md
           (cd distribution && sha256sum SniffSubPlayer-Android.apk > SHA256SUMS.txt)
           python3 - <<'PY'
           import json, os, re

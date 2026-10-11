@@ -37,8 +37,8 @@
 
 ## Android release notes
 
-- Before every Android release, update `release-notes/android.md` in the same commit as the changes with a brief Chinese summary for users: visible improvements, behavior changes, and fixes.
-- Describe this release's changes; do not reuse the previous release's summary or expose private source links, credentials, or internal implementation details.
-- Distinguish code fixes from real-device confirmation; do not claim a reported device issue is resolved before it is verified.
-- Both private and public APK releases must use this file as their Release body. The app's update dialog reads the public Release body.
+- CI generates Android release notes with git-cliff from commits since the last publicly published APK. Do not maintain `release-notes/android.md`; it is historical material and is not a release input.
+- Use clear Conventional Commit descriptions, preferably Chinese user-facing wording. Notes use the commit description without AI translation or code analysis; do not include private source links, credentials, or unverified real-device claims in commit descriptions.
+- `.github/cliff.toml` controls categories and Android production/build path filtering. Keep documentation, tests, and CI maintenance out of user-facing notes; a maintenance-only release gets a brief generic note.
+- Private and public releases must use the same generated notes. The public snapshot contains `distribution/release-notes.md`, and the app's update dialog reads the public Release body. Generation must use published public releases, not the previous push or unpublished source tags, so skipped/cancelled/failed builds do not lose changes.
 - If the maintainer explicitly requests skipping CI for an authorized commit/push, use `[skip ci]` for that operation only and do not manually dispatch a build unless subsequently requested. Existing Release text can be corrected without rebuilding an APK when that edit is explicitly authorized. Follow the Git authorization and CI scope rules above.

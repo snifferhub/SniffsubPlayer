@@ -19,6 +19,8 @@ local.properties
 .gradle/
 .kotlin/
 build/
+__pycache__/
+*.pyc
 
 # Signing material and local secrets
 *.cer
