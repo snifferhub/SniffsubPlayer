@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.os.SystemClock
+import android.os.Trace
 import android.view.View
 import android.view.ViewTreeObserver
 import android.util.Log
@@ -36,28 +37,57 @@ internal class BrowserGlassCapture(
     private var enabled = false
     private var origin = Offset.Zero
     private var scheduled = false
-    private var lastCapture = 0L
+    private var nextCaptureAt = 0L
+    private var scratchBitmap: Bitmap? = null
     private val onDraw = ViewTreeObserver.OnDrawListener { schedule() }
-    private val capture = Runnable {
-        scheduled = false
-        val target = view ?: return@Runnable
-        if (!enabled || target.visibility != View.VISIBLE || target.width <= 0 || target.height <= 0) return@Runnable
-        lastCapture = SystemClock.uptimeMillis()
+    private val onScroll = ViewTreeObserver.OnScrollChangedListener { schedule() }
+    private val capture = object : Runnable {
+        override fun run() {
+            val target = view
+            if (!enabled || target == null || target.visibility != View.VISIBLE || target.width <= 0 || target.height <= 0) {
+                scheduled = false
+                return
+            }
+            val startedAt = SystemClock.uptimeMillis()
+            if (startedAt < nextCaptureAt) {
+                target.postOnAnimation(this)
+                return
+            }
+            scheduled = false
+            Trace.beginSection("BrowserGlassCapture")
+            try {
+                captureFrame(target)
+            } finally {
+                Trace.endSection()
+                // Aim for 30 fps, but leave at least two thirds of UI-thread time for the page.
+                val cost = SystemClock.uptimeMillis() - startedAt
+                nextCaptureAt = startedAt + maxOf(32L, cost * 3)
+            }
+            // Only draw/scroll notifications request another sample; never poll a static page.
+        }
+    }
+
+    private fun captureFrame(target: View) {
         val bandHeight = (128 * target.resources.displayMetrics.density).roundToInt().coerceAtMost(target.height)
         val top = target.height - bandHeight
         val scale = (512f / target.width).coerceAtMost(1f)
-        val bitmap = Bitmap.createBitmap(
-            (target.width * scale).roundToInt().coerceAtLeast(1),
-            (bandHeight * scale).roundToInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888,
-        )
+        val width = (target.width * scale).roundToInt().coerceAtLeast(1)
+        val height = (bandHeight * scale).roundToInt().coerceAtLeast(1)
+        val bitmap = scratchBitmap?.takeIf { it.width == width && it.height == height } ?: run {
+            scratchBitmap?.recycle()
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        }
+        scratchBitmap = bitmap
+        bitmap.eraseColor(Color.TRANSPARENT)
         val canvas = Canvas(bitmap)
         canvas.scale(scale, scale)
         canvas.translate(-target.scrollX.toFloat(), -(target.scrollY + top).toFloat())
         // Software snapshots exclude separate video surfaces; the page itself remains hardware rendered.
         runCatching { target.draw(canvas) }.onFailure {
             bitmap.recycle()
+            scratchBitmap = null
             onCaptureFailure(it)
-            return@Runnable
+            return
         }
         val next = BrowserGlassFrame(
             bitmap = bitmap,
@@ -65,9 +95,7 @@ internal class BrowserGlassCapture(
             size = IntSize(target.width, bandHeight),
         )
         val previous = frame
-        if (previous?.origin == next.origin && previous.size == next.size && previous.bitmap.sameAs(bitmap)) {
-            bitmap.recycle()
-        } else {
+        if (previous?.origin != next.origin || previous.size != next.size || !previous.bitmap.sameAs(bitmap)) {
             var luminance = 0f
             for (row in 0..3) for (column in 0..7) {
                 val pixel = bitmap.getPixel(
@@ -77,6 +105,7 @@ internal class BrowserGlassCapture(
             }
             isDark = luminance / 32 < 0.45f
             // Do not recycle a published bitmap while Compose may still draw its previous frame.
+            scratchBitmap = null
             frame = next
         }
     }
@@ -86,17 +115,14 @@ internal class BrowserGlassCapture(
         detach()
         view = target
         target.viewTreeObserver.addOnDrawListener(onDraw)
+        target.viewTreeObserver.addOnScrollChangedListener(onScroll)
         schedule()
     }
 
     fun setEnabled(value: Boolean) {
         if (enabled == value) return
         enabled = value
-        if (value) schedule() else {
-            view?.removeCallbacks(capture)
-            scheduled = false
-            frame = null
-        }
+        if (value) schedule() else stopCapture()
     }
 
     fun setOrigin(value: Offset) {
@@ -109,17 +135,28 @@ internal class BrowserGlassCapture(
         val target = view ?: return
         if (!enabled || scheduled) return
         scheduled = true
-        target.postDelayed(capture, (lastCapture + 200 - SystemClock.uptimeMillis()).coerceAtLeast(0))
+        target.postOnAnimation(capture)
+    }
+
+    private fun stopCapture() {
+        view?.removeCallbacks(capture)
+        scheduled = false
+        nextCaptureAt = 0L
+        scratchBitmap?.recycle()
+        scratchBitmap = null
+        frame = null
     }
 
     fun detach(target: View? = view) {
         if (target !== view) return
         view?.let {
             it.removeCallbacks(capture)
-            if (it.viewTreeObserver.isAlive) it.viewTreeObserver.removeOnDrawListener(onDraw)
+            if (it.viewTreeObserver.isAlive) {
+                it.viewTreeObserver.removeOnDrawListener(onDraw)
+                it.viewTreeObserver.removeOnScrollChangedListener(onScroll)
+            }
         }
+        stopCapture()
         view = null
-        scheduled = false
-        frame = null
     }
 }
