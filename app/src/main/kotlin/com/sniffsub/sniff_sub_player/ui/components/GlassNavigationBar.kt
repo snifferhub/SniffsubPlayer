@@ -1,6 +1,5 @@
 package com.sniffsub.sniff_sub_player.ui.components
 
-import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -44,36 +43,21 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 
 private val SniffBlue = Color(0xFF0088FF)
 
 @Composable
 fun GlassNavigationBar(
-    backdrop: Backdrop,
     browserSelected: Boolean,
     sniffEnabled: Boolean,
     onBrowser: () -> Unit,
     onSettings: () -> Unit,
     onSniff: () -> Unit,
     modifier: Modifier = Modifier,
-    darkBackdrop: Boolean? = null,
 ) {
-    val surface = when (darkBackdrop) {
-        true -> Color.Black
-        false -> Color.White
-        null -> MaterialTheme.colorScheme.surface
-    }
-    val unselectedTint = when (darkBackdrop) {
-        true -> Color.White
-        false -> Color(0xFF292B30)
-        null -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val glassTint = surface.copy(alpha = if (Build.VERSION.SDK_INT >= 31) 0.16f else 0.30f)
+    val surface = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 1f)
+    val unselectedTint = MaterialTheme.colorScheme.onSurfaceVariant
+    val highlight = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.14f), Color.Transparent))
     Row(
         modifier = modifier.height(64.dp).testTag("bottom_navigation"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -83,16 +67,9 @@ fun GlassNavigationBar(
             modifier = Modifier
                 .weight(1f)
                 .height(64.dp)
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { CircleShape },
-                    effects = {
-                        vibrancy()
-                        blur(10.dp.toPx())
-                        lens(16.dp.toPx(), 24.dp.toPx())
-                    },
-                    onDrawSurface = { drawRect(glassTint) },
-                )
+                .background(surface, CircleShape)
+                .background(highlight, CircleShape)
+                .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
                 .padding(5.dp)
                 .selectableGroup(),
         ) {
@@ -137,24 +114,15 @@ fun GlassNavigationBar(
                     scaleX = scale
                     scaleY = scale
                 }
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { CircleShape },
-                    effects = {
-                        blur(4.dp.toPx())
-                        lens(16.dp.toPx(), 24.dp.toPx())
-                    },
-                    onDrawSurface = {
-                        drawRect(SniffBlue.copy(alpha = if (sniffEnabled) 0.65f else 0.30f))
-                        drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.14f), Color.Transparent)))
-                    },
-                )
+                .background(if (sniffEnabled) SniffBlue else MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape)
+                .background(highlight, CircleShape)
+                .border(0.5.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                 .testTag("sniff_button"),
         ) {
             Icon(
                 Icons.Default.Radar,
                 contentDescription = "嗅探媒体资源",
-                tint = Color.White.copy(alpha = if (sniffEnabled) 1f else 0.6f),
+                tint = if (sniffEnabled) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(28.dp),
             )
         }

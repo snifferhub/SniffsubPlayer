@@ -16,7 +16,6 @@ robolectric = "4.16.1"
 androidxTestCore = "1.6.1"
 
 [libraries]
-compose-backdrop = { module = "io.github.kyant0:backdrop", version = "1.0.0" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { module = "androidx.compose.ui:ui" }

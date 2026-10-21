@@ -32,12 +32,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.backdrops.layerBackdrop
 import com.sniffsub.sniff_sub_player.ui.components.GlassNavigationBar
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.Canvas
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -116,16 +113,6 @@ private fun SniffSubPlayerApp(
     }
     val focusManager = LocalFocusManager.current
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    val backgroundColor = androidx.compose.material3.MaterialTheme.colorScheme.background
-    val backdrop = rememberLayerBackdrop {
-        drawRect(backgroundColor)
-        drawContent()
-    }
-    // Record a bounded bitmap of the webpage, not the native WebView's render node.
-    val browserBackdrop = rememberLayerBackdrop {
-        drawRect(backgroundColor)
-        drawContent()
-    }
     var selectedCandidate by rememberSaveable(stateSaver = listSaver<MediaCandidate?, Any>(
         save = { candidate -> candidate?.let {
             listOf(it.url, it.kind.name, it.source, it.pageUrl, it.referer, it.userAgent, it.detectedAtEpochMs)
@@ -148,11 +135,6 @@ private fun SniffSubPlayerApp(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Canvas(Modifier.fillMaxSize().layerBackdrop(browserBackdrop)) {
-            webViewController.glassCapture.frame?.let {
-                drawImage(it.image, dstOffset = it.origin, dstSize = it.size)
-            }
-        }
         Box(Modifier.fillMaxSize()) {
             BrowserScreen(
                 modifier = Modifier
@@ -187,7 +169,6 @@ private fun SniffSubPlayerApp(
                         adBlockRepository = container.adBlockRepository,
                         controller = webViewController,
                         isActive = currentRoute == BROWSER_ROUTE,
-                        captureGlass = !keyboardVisible && !browserState.candidateSheetVisible,
                         modifier = Modifier.fillMaxSize(),
                     )
                 },
@@ -199,7 +180,6 @@ private fun SniffSubPlayerApp(
                 // The empty browser destination must not cover the persistent WebView.
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(if (currentRoute != PLAYER_ROUTE) Modifier.layerBackdrop(backdrop) else Modifier)
                     .zIndex(if (currentRoute == BROWSER_ROUTE) -1f else 1f),
             ) {
                 composable(BROWSER_ROUTE) { }
@@ -351,8 +331,6 @@ private fun SniffSubPlayerApp(
             modifier = Modifier.align(Alignment.BottomCenter).zIndex(2f),
         ) {
             GlassNavigationBar(
-                backdrop = if (currentRoute == BROWSER_ROUTE) browserBackdrop else backdrop,
-                darkBackdrop = if (currentRoute == BROWSER_ROUTE) webViewController.glassCapture.isDark else null,
                 browserSelected = currentRoute == BROWSER_ROUTE,
                 sniffEnabled = currentRoute == BROWSER_ROUTE && !browserState.loading &&
                     browserState.currentPageUrl.ifBlank { browserState.address }.isNotBlank(),

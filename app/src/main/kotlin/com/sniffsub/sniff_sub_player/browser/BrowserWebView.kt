@@ -22,8 +22,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -44,14 +42,7 @@ class BrowserWebViewController internal constructor() {
     private val activeViews = WeakHashMap<WebView, Boolean>()
     private var active = false
     private var snifferEnabled = false
-    private var captureEnabled = false
-    internal val glassCapture = BrowserGlassCapture()
     private var visualRequest = 0L
-
-    internal fun setCaptureEnabled(value: Boolean) {
-        captureEnabled = value
-        glassCapture.setEnabled(active && value)
-    }
 
     internal fun setSnifferEnabled(value: Boolean) {
         if (snifferEnabled == value) return
@@ -63,7 +54,6 @@ class BrowserWebViewController internal constructor() {
 
     internal fun setActive(value: Boolean) {
         active = value
-        glassCapture.setEnabled(active && captureEnabled)
         webViewSlot.withAttached(::applyActiveState)
     }
 
@@ -126,12 +116,10 @@ class BrowserWebViewController internal constructor() {
 
     internal fun attach(view: WebView) {
         webViewSlot.attach(view)
-        glassCapture.attach(view)
         applyActiveState(view)
     }
 
     internal fun release(view: WebView, rendererGone: Boolean = false) {
-        glassCapture.detach(view)
         activeViews.remove(view)
         sniffRequests.remove(view)
         cosmeticScripts.remove(view)
@@ -208,7 +196,6 @@ fun BrowserWebView(
     modifier: Modifier = Modifier,
     controller: BrowserWebViewController = rememberBrowserWebViewController(),
     isActive: Boolean = true,
-    captureGlass: Boolean = true,
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(controller, lifecycle, isActive) {
@@ -224,7 +211,6 @@ fun BrowserWebView(
         }
     }
     SideEffect {
-        controller.setCaptureEnabled(captureGlass && isActive)
         controller.setSnifferEnabled(state.snifferEnabled)
     }
     val adBlockState by adBlockRepository.state.collectAsState()
@@ -242,7 +228,7 @@ fun BrowserWebView(
 
     key(state.webViewGeneration) {
         AndroidView(
-            modifier = modifier.onGloballyPositioned { controller.glassCapture.setOrigin(it.positionInRoot()) },
+            modifier = modifier,
             factory = { factoryContext ->
                 createBrowserWebView(
                     context = factoryContext,
