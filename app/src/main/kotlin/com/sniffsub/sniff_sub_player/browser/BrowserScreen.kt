@@ -1,12 +1,17 @@
 package com.sniffsub.sniff_sub_player.browser
 
+import android.net.Uri
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
@@ -28,6 +33,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -41,6 +47,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Waves
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -52,7 +59,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -67,13 +75,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,7 +114,8 @@ fun BrowserScreen(
     isActive: Boolean = true,
     webViewContent: @Composable () -> Unit = {},
 ) {
-    var addressText by remember { mutableStateOf(state.address) }
+    var addressText by remember { mutableStateOf(TextFieldValue(state.address)) }
+    var menuExpanded by remember { mutableStateOf(false) }
     var addressFocused by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
@@ -111,8 +124,11 @@ fun BrowserScreen(
     val currentUrl = state.currentPageUrl.ifBlank { state.address }.trim()
     val isBookmarked = state.bookmarks.any { it.url == currentUrl }
 
-    LaunchedEffect(state.address) {
-        if (state.address != addressText) addressText = state.address
+    // Keep page updates separate from the draft so redirects cannot overwrite an edit.
+    LaunchedEffect(addressFocused) {
+        if (addressFocused) {
+            addressText = TextFieldValue(currentUrl, TextRange(0, currentUrl.length))
+        }
     }
     LaunchedEffect(state.transientMessageRevision) {
         state.transientMessage?.let { message ->
@@ -125,7 +141,8 @@ fun BrowserScreen(
     }
 
     fun submitAddress() {
-        actions.onSubmitAddress(addressText)
+        if (addressText.text.isBlank()) return
+        actions.onSubmitAddress(addressText.text)
         browserFocusRequester.requestFocus()
         keyboardController?.hide()
     }
@@ -143,83 +160,142 @@ fun BrowserScreen(
         modifier = modifier.fillMaxSize(),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            Surface {
+            Surface(color = MaterialTheme.colorScheme.surface) {
+                val fieldColor by animateColorAsState(
+                    targetValue = if (addressFocused) MaterialTheme.colorScheme.surfaceContainerLow
+                    else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    animationSpec = tween(180),
+                    label = "address_background",
+                )
+                val borderColor by animateColorAsState(
+                    targetValue = if (addressFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                    animationSpec = tween(180),
+                    label = "address_border",
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                         .testTag("address_row")
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Keep the toolbar compact; editing hides the side buttons and uses equal margins.
                     AnimatedVisibility(
                         visible = !addressFocused,
-                        enter = fadeIn() + expandHorizontally(expandFrom = Alignment.Start),
-                        exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.Start),
+                        enter = fadeIn(tween(180)) + expandHorizontally(tween(180), expandFrom = Alignment.Start),
+                        exit = fadeOut(tween(180)) + shrinkHorizontally(tween(180), shrinkTowards = Alignment.Start),
                     ) {
-                        Row(Modifier.width(96.dp)) {
-                            IconButton(
-                                onClick = actions.onBack,
-                                enabled = state.canGoBack,
-                                modifier = Modifier.testTag("back_button"),
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "后退")
-                            }
-                            IconButton(
-                                onClick = actions.onForward,
-                                enabled = state.canGoForward,
-                                modifier = Modifier.testTag("forward_button"),
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前进")
-                            }
+                        IconButton(
+                            onClick = actions.onBack,
+                            enabled = state.canGoBack,
+                            modifier = Modifier.size(48.dp).testTag("back_button"),
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "后退")
                         }
                     }
-                    OutlinedTextField(
-                        value = addressText,
+                    BasicTextField(
+                        value = if (addressFocused) addressText else TextFieldValue(addressDisplayText(currentUrl)),
                         onValueChange = { addressText = it },
                         modifier = Modifier
                             .weight(1f)
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(fieldColor)
+                            .border(BorderStroke(1.dp, borderColor), RoundedCornerShape(24.dp))
                             .onFocusChanged { addressFocused = it.isFocused }
                             .testTag("address_field"),
                         singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        placeholder = { Text("输入网址或搜索", maxLines = 1) },
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(onGo = { submitAddress() }),
-                        trailingIcon = {
-                            if (addressFocused) {
-                                IconButton(
-                                    onClick = ::submitAddress,
-                                    modifier = Modifier.testTag("submit_address_button"),
-                                ) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前往")
+                        decorationBox = { innerTextField ->
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(start = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                    if ((if (addressFocused) addressText.text else currentUrl).isEmpty()) {
+                                        Text(
+                                            "输入网址或搜索",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    innerTextField()
                                 }
-                            } else {
-                                IconButton(
-                                    onClick = actions.onReload,
-                                    enabled = currentUrl.isNotEmpty(),
-                                    modifier = Modifier.testTag("reload_button"),
-                                ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "刷新网页")
+                                if (addressFocused) {
+                                    IconButton(
+                                        onClick = { addressText = TextFieldValue() },
+                                        enabled = addressText.text.isNotEmpty(),
+                                        modifier = Modifier.size(48.dp).testTag("clear_address_button"),
+                                    ) {
+                                        Icon(Icons.Default.Close, contentDescription = "清空地址", modifier = Modifier.size(20.dp))
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = actions.onReload,
+                                        enabled = currentUrl.isNotEmpty(),
+                                        modifier = Modifier.size(48.dp).testTag("reload_button"),
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = "刷新网页", modifier = Modifier.size(20.dp))
+                                    }
                                 }
                             }
                         },
                     )
-                    AnimatedVisibility(
-                        visible = !addressFocused,
-                        enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
-                        exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End),
-                    ) {
-                        IconButton(
-                            onClick = actions.onToggleBookmark,
-                            enabled = currentUrl.isNotEmpty(),
-                            modifier = Modifier.testTag("bookmark_button"),
+                    Box {
+                        if (addressFocused) {
+                            TextButton(
+                                onClick = {
+                                    browserFocusRequester.requestFocus()
+                                    keyboardController?.hide()
+                                },
+                                modifier = Modifier.height(48.dp).testTag("cancel_address_button"),
+                            ) {
+                                Text("取消")
+                            }
+                        } else {
+                            IconButton(
+                                onClick = { menuExpanded = true },
+                                modifier = Modifier.size(48.dp).testTag("browser_menu_button"),
+                            ) {
+                                Icon(Icons.Default.MoreHoriz, contentDescription = "更多浏览操作")
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded && !addressFocused,
+                            onDismissRequest = { menuExpanded = false },
+                            shape = RoundedCornerShape(20.dp),
                         ) {
-                            Icon(
-                                imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                contentDescription = if (isBookmarked) "取消收藏" else "收藏",
+                            DropdownMenuItem(
+                                text = { Text("前进") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                                enabled = state.canGoForward,
+                                onClick = {
+                                    menuExpanded = false
+                                    actions.onForward()
+                                },
+                                modifier = Modifier.testTag("forward_button"),
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (isBookmarked) "取消收藏" else "收藏网页") },
+                                leadingIcon = {
+                                    Icon(
+                                        if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                        contentDescription = null,
+                                    )
+                                },
+                                enabled = currentUrl.isNotEmpty(),
+                                onClick = {
+                                    menuExpanded = false
+                                    actions.onToggleBookmark()
+                                },
+                                modifier = Modifier.testTag("bookmark_button"),
                             )
                         }
                     }
@@ -261,6 +337,16 @@ fun BrowserScreen(
     if (isActive && state.candidateSheetVisible) {
         CandidateSheet(state = state, actions = actions)
     }
+}
+
+/** Only collapse web URLs; keep custom schemes and local addresses explicit. */
+internal fun addressDisplayText(url: String): String {
+    val uri = Uri.parse(url)
+    if (!uri.scheme.equals("https", ignoreCase = true) && !uri.scheme.equals("http", ignoreCase = true)) return url
+    val host = uri.host?.takeIf { it.isNotBlank() } ?: return url
+    val port = uri.port
+    val defaultPort = if (uri.scheme.equals("https", ignoreCase = true)) 443 else 80
+    return if (port != -1 && port != defaultPort) "$host:$port" else host
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

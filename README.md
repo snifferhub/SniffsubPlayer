@@ -58,7 +58,7 @@ CI 将运行编号写入 `BuildConfig.RELEASE_BUILD_NUMBER`，发布包 `version
 node --test app/src/test/js/cosmetic-filtering.test.cjs
 ```
 
-APK 编译、签名和发布通过 GitHub Actions 完成，不在本地组装 APK。
+日常 APK 编译、签名和发布通过 GitHub Actions 完成。维护者要求在本机模拟器排查 UI 时，可使用 `android-dev run` 本地构建并运行 Debug 包，详见[本机模拟器调试](docs/local-android-debugging.md)。
 
 ## 自动发布
 

@@ -24,6 +24,7 @@
 - The Android implementation is the Kotlin/Jetpack Compose code under `app/`.
 - Run JVM unit tests and lint locally. Gradle compilation required by these checks is allowed.
 - Do not assemble APKs locally or run emulator/real-device tests unless the maintainer requests them.
+- When the maintainer requests local emulator UI debugging, use `scripts/android-dev.sh` (or the configured `android-dev` shell function) to build a Debug APK and target the named local emulator. See `docs/local-android-debugging.md`. This does not authorize physical-device tests or release publishing.
 - When pushing is explicitly authorized, push Android changes to the `Android` branch. Use GitHub Actions for authorized APK compilation, signing, and release publishing; development requests alone do not authorize a push or CI dispatch.
 - Local JVM tests and lint must pass before pushing; CI must compile the APKs before artifacts are considered buildable.
 - For an authorized build/release, let the established CI workflow publish the signed release APK to GitHub Releases after compilation passes. Do not manually publish a Release without explicit authorization.

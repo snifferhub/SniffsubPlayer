@@ -3,6 +3,11 @@ package com.sniffsub.sniff_sub_player.browser
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.Text
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
@@ -12,7 +17,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.unit.dp
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -39,45 +43,56 @@ class BrowserScreenTest {
     }
 
     @Test
-    fun toolbar_is_compact_and_address_is_centered_only_when_editing() {
+    fun editing_expands_address_without_moving_page_and_cancel_restores_url() {
+        var submitted = 0
         compose.setContent {
-            BrowserScreen(state = sampleState(), actions = noOpActions())
+            BrowserScreen(
+                state = sampleState().copy(address = "https://example.test/watch?id=42", currentPageUrl = "https://example.test/watch?id=42"),
+                actions = noOpActions().copy(onSubmitAddress = { submitted++ }),
+            )
         }
-        fun assertCompact() {
-            val field = compose.onNodeWithTag("address_field").fetchSemanticsNode().boundsInRoot
-            val forward = compose.onNodeWithTag("forward_button").fetchSemanticsNode().boundsInRoot
-            val bookmark = compose.onNodeWithTag("bookmark_button").fetchSemanticsNode().boundsInRoot
-            // Icon semantics can exclude their small built-in touch padding.
-            val maximumGap = with(compose.density) { 8.dp.toPx() }
-            org.junit.Assert.assertTrue(field.left - forward.right in 0f..maximumGap)
-            org.junit.Assert.assertTrue(bookmark.left - field.right in 0f..maximumGap)
-        }
-        assertCompact()
-        val compactWidth = compose.onNodeWithTag("address_field").fetchSemanticsNode().boundsInRoot.width
-        compose.onNodeWithTag("address_field").performClick()
-        val row = compose.onNodeWithTag("address_row").fetchSemanticsNode().boundsInRoot
-        val field = compose.onNodeWithTag("address_field").fetchSemanticsNode().boundsInRoot
-        assertEquals(row.center.x, field.center.x, 1f)
-        org.junit.Assert.assertTrue(field.left > row.left && field.right < row.right)
-        org.junit.Assert.assertTrue(field.width > compactWidth)
-        compose.onNodeWithTag("address_field").performImeAction()
-        assertCompact()
+        val address = compose.onNodeWithTag("address_field")
+        address.assertTextEquals("example.test")
+        val compact = address.fetchSemanticsNode().boundsInRoot
+        val pageTop = compose.onNodeWithTag("browser_webview").fetchSemanticsNode().boundsInRoot.top
+        address.performClick()
+        address.assertTextEquals("https://example.test/watch?id=42")
+        org.junit.Assert.assertTrue(address.fetchSemanticsNode().boundsInRoot.width > compact.width)
+        assertEquals(pageTop, compose.onNodeWithTag("browser_webview").fetchSemanticsNode().boundsInRoot.top, 1f)
+        compose.onNodeWithTag("back_button").assertDoesNotExist()
+        compose.onNodeWithTag("browser_menu_button").assertDoesNotExist()
+        compose.onNodeWithTag("clear_address_button").performClick()
+        address.assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
+        address.performTextInput("discarded.test")
+        compose.onNodeWithTag("cancel_address_button").performClick()
+        address.assertIsNotFocused().assertTextEquals("example.test")
+        address.performClick()
+        address.assertTextEquals("https://example.test/watch?id=42")
+        assertEquals(0, submitted)
     }
 
     @Test
-    fun chrome_keeps_expected_controls_and_enabled_states() {
+    fun chrome_moves_forward_and_bookmark_to_menu_with_correct_actions() {
+        var forwarded = 0
+        var bookmarked = 0
         compose.setContent {
             BrowserScreen(
                 state = sampleState(),
-                actions = noOpActions(),
+                actions = noOpActions().copy(onForward = { forwarded++ }, onToggleBookmark = { bookmarked++ }),
                 webViewContent = { Text("WebView placeholder") },
             )
         }
-
-        compose.onNodeWithTag("bookmark_button").assertExists().assertIsEnabled()
         compose.onNodeWithTag("settings_button").assertDoesNotExist()
         compose.onNodeWithTag("back_button").assertExists().assertIsNotEnabled()
-        compose.onNodeWithTag("forward_button").assertExists().assertIsEnabled()
+        compose.onNodeWithTag("forward_button").assertDoesNotExist()
+        compose.onNodeWithTag("bookmark_button").assertDoesNotExist()
+        compose.onNodeWithTag("browser_menu_button").performClick()
+        compose.onNodeWithTag("bookmark_button").assertIsEnabled()
+        compose.onNodeWithTag("forward_button").assertIsEnabled().performClick()
+        assertEquals(1, forwarded)
+        compose.onNodeWithTag("browser_menu_button").performClick()
+        compose.onNodeWithTag("bookmark_button").performClick()
+        assertEquals(1, bookmarked)
         compose.onNodeWithTag("address_field").assertExists()
         compose.onNodeWithTag("browser_webview").assertExists()
         compose.onNodeWithTag("candidate_panel").assertDoesNotExist()
