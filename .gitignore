@@ -6,9 +6,14 @@ xcuserdata/
 DerivedData/
 .build/
 
-# Local Flutter workspace remains while switching branches.
-.dart_tool/
-.flutter-plugins-dependencies
-android/
-build/
-ios/
+# Local native Android worktree.
+.worktrees/
+
+# Multiplatform build outputs and local SDK configuration.
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.idea/
+__pycache__/
+*.pyc
