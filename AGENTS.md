@@ -9,7 +9,9 @@
 - Provide a suggested Conventional Commit message after code changes.
 - Do not write or add tests. Preserve existing tests unless the maintainer explicitly requests their removal; do not run tests without the maintainer's requested procedure.
 - All Android compilation and packaging must run on GitHub CI, never locally. This includes Kotlin compilation, APK builds, and tasks that implicitly compile Android sources. CI dispatch still requires operation-specific authorization.
+- `.github/workflows/android-build.yml` builds a signed Android release on pushes to `main` and publishes the APK/checksum to `snifferhub/SniffSubPlayer-Releases` using the existing repository-scoped GitHub App. This release repository is platform-neutral and will also hold future platform packages. Keep release version codes increasing across workflow migrations and generate release notes from commits. Do not reduce this to a manual-only Debug artifact workflow.
 - Build iOS locally for now. Do not launch apps, simulators, or physical-device tests without the maintainer's requested procedure.
+- After Java/Gradle work, stop build daemons and clean up residual Java processes started for that work. Do not terminate unrelated pre-existing Java services.
 - After the migration is verified usable, the intended initial branch layout is `main` only; do not create `dev` yet. Branch deletion requires operation-specific authorization. Removal of the old Android worktree does not establish migration or runtime validation.
 - Keep Android application ID, signing configuration, preference keys, and monotonically increasing release version codes intact.
 - Do not introduce Flutter or Dart. Preserve the existing visual design when extracting shared Compose UI.

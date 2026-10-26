@@ -65,16 +65,31 @@ iOS 首次读取时，将原有 `SniffSubPlayer.userAgent`、`SniffSubPlayer.pla
 
 在 Android Studio 中打开仓库根目录，选择 `app` 模块。需要 Android SDK 36；保持原有 application ID、偏好设置键和发布签名配置。Android 的所有编译和打包一律在 GitHub CI 进行，不在本地执行。
 
-`.github/workflows/android-build.yml` 提供手动触发的 `Build Android KMP` 工作流，只生成 Debug APK 并上传 Actions artifact，不执行测试或发布 Release。工作流需要先经维护者提交到 GitHub 才能使用，本轮未触发。
+`.github/workflows/android-build.yml` 提供 `Build and Publish Android` 工作流：每次推送到 `main` 自动编译签名 Release APK，也可在 `main` 手动触发。连续推送排队执行（最多 100 个等待任务），不取消已在执行的构建；不执行测试。
+
+APK 同时保存为 Actions artifact，并通过已有 GitHub App 直接上传到专用公开仓库 `snifferhub/SniffSubPlayer-Releases` 的 GitHub Release，资产名保持 `SniffSubPlayer-Android.apk`，附带 `SHA256SUMS.txt`。该仓库为跨平台发布入口，后续可添加 iOS 等其他平台的包；不再推送该仓库的 `packages` 分支触发二次发布，现有历史 Release 不变。源码仓库仅新增对应版本标签，用于追踪后续更新说明的提交范围，不重复发布 APK。
+
+构建号取工作流计数与已有公开 Release/源码标签最大构建号加一的较大值，避免工作流迁移、失败重试导致版本号回退或复用。发布标签继续采用 `android-v<versionName>-build.<build>`，APK `versionCode` 继续采用 `10000 + build`，与应用内更新逻辑兼容。更新说明使用 git-cliff 从提交生成，包含共享 Kotlin/Compose 改动；从旧 Android 分支切换到不同提交历史的 KMP main 时，首次说明基于当前分支历史生成。
+
+沿用源码仓库的以下配置：
+
+| 类型 | 名称 |
+| --- | --- |
+| Secrets | `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` |
+| Secret | `ANDROID_UPDATES_APP_PRIVATE_KEY` |
+| Variable | `ANDROID_UPDATES_APP_CLIENT_ID` |
+
+GitHub App 需要安装在专用发布仓库并具有 Contents 写权限。构建后停止 Gradle 守护进程并删除临时签名文件；Kotlin 编译器在 Gradle 进程内执行，避免另留守护进程。
 
 ## 验证
 
 项目约定：不新增测试；原有测试文件保留，测试执行由维护者指定。Android 编译在 GitHub CI，iOS 编译暂时在本地。CI 触发、Git 提交和推送须单独授权。
 
-GitHub CI 中的 Android 编译入口：
+GitHub CI 中的 Android 编译入口（工作流注入签名环境变量和递增的构建号）：
 
 ```sh
-./gradlew :app:compileDebugKotlin
+./gradlew :app:assembleRelease -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
+  -Pkotlin.compiler.execution.strategy=in-process --no-daemon
 ```
 
 iOS 模拟器目标纯编译（Apple Silicon）：

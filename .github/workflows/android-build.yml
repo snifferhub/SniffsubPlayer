@@ -1,36 +1,157 @@
-name: Build Android KMP
+name: Build and Publish Android
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: android-kmp-${{ github.ref }}
-  cancel-in-progress: true
+  group: android-main-release
+  cancel-in-progress: false
+  queue: max
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PUBLIC_RELEASE_REPOSITORY: snifferhub/SniffSubPlayer-Releases
 
 jobs:
   android:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve release version and commit range
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/$PUBLIC_RELEASE_REPOSITORY/releases?per_page=100" \
+            > "$RUNNER_TEMP/android-releases.json"
+          python3 .github/scripts/release_notes.py prepare \
+            --releases "$RUNNER_TEMP/android-releases.json" \
+            --head "$GITHUB_SHA" \
+            --run-number "$GITHUB_RUN_NUMBER"
+
+      - name: Generate release notes from commits
+        uses: orhun/git-cliff-action@v4.8.0
+        with:
+          version: v2.13.1
+          config: .github/cliff.toml
+          args: ${{ steps.release.outputs.range }}
+        env:
+          OUTPUT: ${{ runner.temp }}/android-release-notes.md
+
+      - name: Finalize release notes
+        run: python3 .github/scripts/release_notes.py finalize --notes "$RUNNER_TEMP/android-release-notes.md"
 
       - name: Set up Java
+        id: java
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
 
-      - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          RELEASE_APP_CLIENT_ID: ${{ vars.ANDROID_UPDATES_APP_CLIENT_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.ANDROID_UPDATES_APP_PRIVATE_KEY }}
+        run: |
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD RELEASE_APP_CLIENT_ID RELEASE_APP_PRIVATE_KEY; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing required signing or publishing configuration: $name"
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release-keystore.jks"
 
-      - name: Upload debug APK
+      - name: Build signed release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release-keystore.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          RELEASE_BUILD_NUMBER: ${{ steps.release.outputs.build }}
+        run: |
+          ./gradlew :app:assembleRelease \
+            -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            --no-daemon
+
+      - name: Stop build daemons and remove signing material
+        if: always() && steps.java.outcome == 'success'
+        run: |
+          rm -f "$RUNNER_TEMP/release-keystore.jks"
+          ./gradlew --stop
+
+      - name: Verify and collect signed APK
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify "$APK"
+          mkdir -p dist
+          cp "$APK" dist/SniffSubPlayer-Android.apk
+          (cd dist && sha256sum SniffSubPlayer-Android.apk > SHA256SUMS.txt)
+
+      - name: Upload signed APK artifact
         uses: actions/upload-artifact@v7
         with:
-          name: SniffSubPlayer-Android-KMP-debug-${{ github.run_number }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: SniffSubPlayer-Android-${{ steps.release.outputs.build }}
+          path: dist/*
           if-no-files-found: error
+
+      - name: Create repository-scoped release bot token
+        id: release_bot
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.ANDROID_UPDATES_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ANDROID_UPDATES_APP_PRIVATE_KEY }}
+          owner: snifferhub
+          repositories: SniffSubPlayer-Releases
+          permission-contents: write
+
+      - name: Record source tag for subsequent release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" > /dev/null
+
+      - name: Publish APK to dedicated release repository
+        env:
+          GH_TOKEN: ${{ steps.release_bot.outputs.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          APP_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ steps.release.outputs.build }}
+        run: |
+          test -s "$RUNNER_TEMP/android-release-notes.md"
+          gh release create "$RELEASE_TAG" \
+            dist/SniffSubPlayer-Android.apk dist/SHA256SUMS.txt \
+            --repo "$PUBLIC_RELEASE_REPOSITORY" \
+            --target main \
+            --title "SniffSubPlayer Android $APP_VERSION (build $RELEASE_BUILD_NUMBER)" \
+            --notes-file "$RUNNER_TEMP/android-release-notes.md" \
+            --latest
+          printf 'Published Android build %s to %s\n' \
+            "$RELEASE_BUILD_NUMBER" "$PUBLIC_RELEASE_REPOSITORY" >> "$GITHUB_STEP_SUMMARY"

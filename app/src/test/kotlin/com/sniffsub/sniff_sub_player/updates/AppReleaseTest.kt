@@ -12,7 +12,7 @@ class AppReleaseTest {
     fun source_selects_the_newest_android_build_without_relying_on_response_order() = runTest {
         val source = GitHubAppUpdateSource(object : HttpFetcher {
             override suspend fun get(url: String, headers: Map<String, String>, timeoutMillis: Long, maximumBytes: Int): ByteArray {
-                assertEquals("https://api.github.com/repos/snifferhub/SniffSubPlayer-Android-Releases/releases?per_page=30", url)
+                assertEquals("https://api.github.com/repos/snifferhub/SniffSubPlayer-Releases/releases?per_page=30", url)
                 return "[${releaseJson(17)},${releaseJson(20)},${releaseJson(18)}]".encodeToByteArray()
             }
         })
@@ -62,7 +62,7 @@ class AppReleaseTest {
 
 internal fun sampleRelease(build: Int = 19) = AppRelease(
     "1.1.0", build, "新版本说明",
-    "https://github.com/snifferhub/SniffSubPlayer-Android-Releases/releases/download/android-v1.1.0-build.$build/SniffSubPlayer-Android.apk",
+    "https://github.com/snifferhub/SniffSubPlayer-Releases/releases/download/android-v1.1.0-build.$build/SniffSubPlayer-Android.apk",
     100, "a".repeat(64),
 )
 
@@ -70,5 +70,5 @@ internal fun releaseJson(build: Int) = """{
     "tag_name":"android-v1.1.0-build.$build","draft":false,"prerelease":false,"body":"说明",
     "assets":[{"name":"SniffSubPlayer-Android.apk","state":"uploaded","size":100,
     "digest":"sha256:${"a".repeat(64)}",
-    "browser_download_url":"https://github.com/snifferhub/SniffSubPlayer-Android-Releases/releases/download/android-v1.1.0-build.$build/SniffSubPlayer-Android.apk"}]
+    "browser_download_url":"https://github.com/snifferhub/SniffSubPlayer-Releases/releases/download/android-v1.1.0-build.$build/SniffSubPlayer-Android.apk"}]
 }""".trimIndent()
