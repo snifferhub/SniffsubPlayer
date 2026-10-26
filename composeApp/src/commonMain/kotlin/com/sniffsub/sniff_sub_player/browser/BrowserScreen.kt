@@ -110,6 +110,7 @@ fun BrowserScreen(
     modifier: Modifier = Modifier,
     accentArgb: Long = 0xFFE8A7BFL,
     isActive: Boolean = true,
+    showSniffMenuItem: Boolean = true,
     tabsContent: @Composable () -> Unit = {},
     webViewContent: @Composable () -> Unit = {},
 ) {
@@ -122,6 +123,10 @@ fun BrowserScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val currentUrl = state.currentPageUrl.ifBlank { state.address }.trim()
     val isBookmarked = state.bookmarks.any { it.url == currentUrl }
+
+    LaunchedEffect(isActive) {
+        if (!isActive) menuExpanded = false
+    }
 
     // Keep page updates separate from the draft so redirects cannot overwrite an edit.
     LaunchedEffect(addressFocused) {
@@ -267,19 +272,21 @@ fun BrowserScreen(
                             }
                         }
                         DropdownMenu(
-                            expanded = menuExpanded && !addressFocused,
+                            expanded = isActive && menuExpanded && !addressFocused,
                             onDismissRequest = { menuExpanded = false },
                             shape = RoundedCornerShape(20.dp),
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("扫描媒体资源") },
-                                leadingIcon = { Icon(Icons.Default.Radar, contentDescription = null) },
-                                enabled = !state.loading && currentUrl.isNotEmpty(),
-                                onClick = {
-                                    menuExpanded = false
-                                    actions.onRequestSniff()
-                                },
-                            )
+                            if (showSniffMenuItem) {
+                                DropdownMenuItem(
+                                    text = { Text("扫描媒体资源") },
+                                    leadingIcon = { Icon(Icons.Default.Radar, contentDescription = null) },
+                                    enabled = !state.loading && currentUrl.isNotEmpty(),
+                                    onClick = {
+                                        menuExpanded = false
+                                        actions.onRequestSniff()
+                                    },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text("前进") },
                                 leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },

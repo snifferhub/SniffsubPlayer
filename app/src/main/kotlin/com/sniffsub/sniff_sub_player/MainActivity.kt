@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -20,13 +21,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -36,6 +37,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import com.sniffsub.sniff_sub_player.ui.components.GlassNavigationBar
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -53,8 +55,6 @@ import com.sniffsub.sniff_sub_player.browser.BrowserActions
 import com.sniffsub.sniff_sub_player.browser.BrowserScreen
 import com.sniffsub.sniff_sub_player.browser.BrowserViewModel
 import com.sniffsub.sniff_sub_player.browser.BrowserWebView
-import com.sniffsub.sniff_sub_player.browser.BrowserTabBar
-import com.sniffsub.sniff_sub_player.browser.BrowserWebViewController
 import com.sniffsub.sniff_sub_player.browser.AndroidWebContentFilter
 import com.sniffsub.sniff_sub_player.browser.classifyWebResource
 import com.sniffsub.sniff_sub_player.adblock.AdRequest
@@ -114,15 +114,7 @@ private fun SniffSubPlayerApp(
     val adBlockState by container.adBlockRepository.state.collectAsState()
     val updateState by container.appUpdateManager.state.collectAsState()
     var showUpdateDialog by remember { mutableStateOf(false) }
-    val tabsState by browserViewModel.workspace.tabs.collectAsState()
-    val controllers = remember { mutableMapOf<String, BrowserWebViewController>() }
-    tabsState.tabs.forEach { tab ->
-        key(tab.id) {
-            controllers[tab.id] = rememberBrowserWebViewController()
-        }
-    }
-    controllers.keys.retainAll(tabsState.tabs.map { it.id }.toSet())
-    val webViewController = controllers.getValue(tabsState.selectedId)
+    val webViewController = rememberBrowserWebViewController()
     val contentFilter = remember(container.adBlockRepository, coroutineScope) {
         object : AndroidWebContentFilter {
             override val rulesRevision = container.adBlockRepository.state.map { it.rulesRevision }
@@ -153,7 +145,7 @@ private fun SniffSubPlayerApp(
 
     LaunchedEffect(currentRoute) {
         if (currentRoute != SETTINGS_ROUTE) showUpdateDialog = false
-        if (currentRoute != BROWSER_ROUTE) browserViewModel.workspace.stopAllSniffing()
+        if (currentRoute != BROWSER_ROUTE) browserViewModel.stopSniff()
     }
 
     LaunchedEffect(container.adBlockRepository, actionExecutor) {
@@ -162,13 +154,16 @@ private fun SniffSubPlayerApp(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Box(Modifier.fillMaxSize()) {
             BrowserScreen(
                 modifier = Modifier
+                    // Keep the page alive, but hide all browser chrome outside its route.
+                    .drawWithContent { if (currentRoute == BROWSER_ROUTE) drawContent() }
                     .then(if (currentRoute == BROWSER_ROUTE) Modifier else Modifier.clearAndSetSemantics {}),
                 state = browserState,
                 isActive = currentRoute == BROWSER_ROUTE,
+                showSniffMenuItem = false,
                 accentArgb = preferences.accentArgb,
                 actions = BrowserActions(
                     onToggleBookmark = browserViewModel::toggleBookmark,
@@ -190,39 +185,25 @@ private fun SniffSubPlayerApp(
                     },
                     onConsumeTransientMessage = browserViewModel::clearTransientMessage,
                 ),
-                tabsContent = {
-                    BrowserTabBar(
-                        tabsState,
-                        browserViewModel.workspace::selectTab,
-                        browserViewModel.workspace::closeTab,
-                        browserViewModel.workspace::addTab,
-                    )
-                },
                 webViewContent = {
-                    Box(Modifier.fillMaxSize()) {
-                        tabsState.tabs.forEach { tab ->
-                            key(tab.id) {
-                                val session = browserViewModel.workspace.session(tab.id)
-                                val tabState by session.uiState.collectAsState()
-                                val selected = tab.id == tabsState.selectedId
-                                BrowserWebView(
-                                    state = tabState,
-                                    viewModel = session,
-                                    contentFilter = contentFilter,
-                                    controller = controllers.getValue(tab.id),
-                                    isActive = selected && currentRoute == BROWSER_ROUTE,
-                                    modifier = Modifier.fillMaxSize().zIndex(if (selected) 1f else -1f)
-                                        .then(if (selected) Modifier else Modifier.clearAndSetSemantics {}),
-                                )
-                            }
-                        }
-                    }
+                    BrowserWebView(
+                        state = browserState,
+                        viewModel = browserViewModel.session,
+                        contentFilter = contentFilter,
+                        controller = webViewController,
+                        isActive = currentRoute == BROWSER_ROUTE,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 },
             )
 
             NavHost(
                 navController = navController,
                 startDestination = BROWSER_ROUTE,
+                enterTransition = { EnterTransition.None },
+                exitTransition = { ExitTransition.None },
+                popEnterTransition = { EnterTransition.None },
+                popExitTransition = { ExitTransition.None },
                 // The empty browser destination must not cover the persistent WebView.
                 modifier = Modifier
                     .fillMaxSize()

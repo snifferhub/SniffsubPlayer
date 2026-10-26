@@ -110,6 +110,7 @@ xcodebuild -project iosApp/SniffSubPlayer.xcodeproj \
 
 ## MVP 限制
 
+- Android 当前仅提供单页面浏览，不显示网页标签栏；嗅探资源统一从右下角圆形按钮进入。
 - `blob:` 不能直接播放，需要选择其背后的 `.m3u8` / `.mp4` 候选。
 - 当前还没有本地代理，Referer/Cookie 复杂防盗链资源可能播放失败。
 - HLS 分片、key、相对路径重写会在下一阶段通过本地代理补齐。
@@ -117,6 +118,7 @@ xcodebuild -project iosApp/SniffSubPlayer.xcodeproj \
 
 ## 下一阶段
 
+- TODO：Android 多标签页浏览（标签栏、新建/切换/关闭、各页面独立历史与状态）；当前保持单会话、单 WebView。
 - 将共享 Cookie 服务接入播放器请求，并验证媒体跨域、重定向和子资源行为。
 - 将字幕搜索、播放器通用状态和广告规则更新流程逐步迁入共享层，原生播放与规则编译能力保留平台适配。
 - 增加本地 `127.0.0.1` 代理，重写 m3u8 和分片 URL。

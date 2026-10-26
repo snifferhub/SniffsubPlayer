@@ -12,20 +12,18 @@ class BrowserViewModel(
     clock: () -> Long = System::currentTimeMillis,
     savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
-    private val initialSession = BrowserSession(
+    val session = BrowserSession(
         preferencesRepository, candidateAccumulator, clock, viewModelScope,
         initialUrl = savedStateHandle.get<String>("pageUrl").orEmpty(),
     )
-    val workspace = BrowserWorkspace(viewModelScope, preferencesRepository, initialSession)
-    val session get() = workspace.activeSession
     val uiState get() = session.uiState
     init {
         viewModelScope.launch {
-            workspace.uiState.collect { savedStateHandle["pageUrl"] = it.currentPageUrl.ifBlank { it.address } }
+            session.uiState.collect { savedStateHandle["pageUrl"] = it.currentPageUrl.ifBlank { it.address } }
         }
     }
     override fun onCleared() {
-        workspace.close()
+        session.close()
     }
     fun submitAddress(input: String) = session.submitAddress(input)
     fun updatePage(url: String?, pageTitle: String? = null, started: Boolean = false) = session.updatePage(url, pageTitle, started)
