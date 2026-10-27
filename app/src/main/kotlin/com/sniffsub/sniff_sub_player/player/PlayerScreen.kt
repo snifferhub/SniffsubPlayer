@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -432,9 +433,9 @@ fun PlayerScreen(
         ) {
             PlayerFeedbackBubble(
                 text = when {
-                    seekSession != null -> "定位 ${formatPlayerTime(scrubPositionMs ?: currentPositionMs)} / ${formatPlayerTime(durationMs)}"
+                    seekSession != null -> " ${formatPlayerTime(scrubPositionMs ?: currentPositionMs)} / ${formatPlayerTime(durationMs)}"
                     levelFeedback != null -> levelFeedback.orEmpty()
-                    else -> feedbackText.orEmpty()
+                    else -> feedbackText
                 },
             )
         }
@@ -451,14 +452,20 @@ fun PlayerScreen(
 }
 
 @Composable
-private fun PlayerFeedbackBubble(text: String) {
+private fun PlayerFeedbackBubble(text: String?) {
+    var lastNonEmptyText by remember { mutableStateOf(text.orEmpty()) }
+    if (!text.isNullOrEmpty()) {
+        // AnimatedVisibility retains this composable while fading out.
+        SideEffect { lastNonEmptyText = text }
+    }
+
     Surface(
         color = Color.Black.copy(alpha = 0.68f),
         contentColor = Color.White,
         shape = RoundedCornerShape(50),
     ) {
         Text(
-            text = text,
+            text = text ?: lastNonEmptyText,
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
         )
