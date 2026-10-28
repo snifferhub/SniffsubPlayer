@@ -1,131 +1,90 @@
-# SniffSubPlayer
+<!-- <p align="center">
+  <img src="iosApp/SniffSubPlayer/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="112" height="112" alt="SniffSubPlayer 金色小狗应用图标">
+</p> -->
 
-Android / iOS 嗅探字幕播放器，正在从原生双端迁移到 Kotlin Multiplatform（KMP）与 Compose Multiplatform。
+<h1 align="center">SniffSubPlayer</h1>
 
-## 工程结构
+<p align="center">
+  <strong>发现网页视频，配上你的字幕。</strong><br>
+  集内置浏览器、媒体嗅探与外挂字幕于一体的 Android / iOS 播放器。
+</p>
 
-两端源码已放在根目录的同一工作区。Android 使用 `app`，iOS 宿主及 Xcode 工程统一放在 `iosApp`；旧 Android worktree 已删除。
+<p align="center">
+  <a href="https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest"><strong>下载 Android</strong></a>
+  &nbsp; · &nbsp;
+  <a href="#开始使用">使用指南</a>
+  &nbsp; · &nbsp;
+  <a href="docs/DEVELOPMENT.md">开发文档</a>
+</p>
 
-| 目录 | 职责 |
-| --- | --- |
-| `shared/src/commonMain` | 浏览器状态、原生历史快照、标签页会话、候选资源解析、字幕解析与时间轴、偏好设置与收藏修改逻辑、广告设置状态模型、Cookie 服务接口 |
-| `shared/src/androidMain` | Android CookieManager、URL/时钟/ID 平台实现 |
-| `shared/src/iosMain` | WKHTTPCookieStore、NSUserDefaults 偏好持久化与旧 Swift 数据迁移、URL/时钟/ID 平台实现 |
-| `composeApp/src/commonMain` | 共享浏览器地址栏、工具栏、标签页、候选列表、设置页、收藏夹、广告屏蔽设置 UI 及嗅探 JS 资源 |
-| `composeApp/src/androidMain` | Android WebView 接入、生命周期与内容过滤接口 |
-| `composeApp/src/iosMain` | WKWebView 接入、Compose UIViewController 与 Swift 回调桥接 |
-| `app` | Android 应用入口与导航、Media3 播放器、偏好持久化、广告过滤、字幕下载与应用更新 |
-| `iosApp` | iOS Xcode 工程、Compose 宿主与桥接、暂留的 AVPlayer 播放器及字幕搜索 UI、原生广告规则处理 |
+<p align="center">
+  Android 9+ · arm64 &nbsp; / &nbsp; iOS 源码构建 &nbsp; / &nbsp; KMP 迁移中
+</p>
 
-历史模型保存 WebView / WKWebView 的实际前进后退列表快照；每个标签页有独立会话和原生视图。标签页目前仅在进程内保存；Android 继续恢复当前页面地址。
+---
 
-浏览器、设置、收藏夹、广告屏蔽设置 UI 已由两端共用 Compose 实现；浏览器状态、媒体候选模型、字幕解析与时间轴、UA/主题色/收藏修改逻辑位于共享 Kotlin 层。Android 保留原有应用导航和更新入口，iOS 通过共享 `AppScreen` 导航并隐藏 Android 更新入口。
+在内置浏览器中打开视频网页，扫描媒体资源，再交给原生播放器播放。你可以导入 SRT / VTT 字幕、粘贴字幕文本，或在线搜索字幕并应用到当前视频。
 
-iOS 首次读取时，将原有 `SniffSubPlayer.userAgent`、`SniffSubPlayer.playerAccentColor` 和 `SniffSubPlayer.bookmarks` 导入 Kotlin 管理的偏好数据，保留收藏 ID 与创建时间。若解码失败，保留原始数据并显示错误，不用空收藏覆盖旧数据。主题色继续同步到原生播放器使用的旧存储键。
+| 浏览网页 | 发现媒体 | 配上字幕 |
+| :--- | :--- | :--- |
+| 打开站点、收藏页面，按需切换 UA 和广告屏蔽设置。 | 扫描网页中的媒体候选，选择 `.m3u8` / `.mp4` 等资源播放。 | 导入本地文件、粘贴文本或在线搜索，调整字幕偏移与字号。 |
 
-旧 Swift `BrowserStore`、浏览器/设置/收藏列表 UI、重复媒体分类及收藏模型已删除。`iosApp` 当前仍含尚未迁移的功能代码，不能把目录整理当作完成迁移：播放器控件和字幕搜索仍是两端实现；广告设置 UI 与状态模型共享，规则下载、缓存、转换和应用仍由 Android 规则引擎及 iOS `AdBlockManager` 分别负责。iOS 转换依赖 `SafariConverterLib`，规则编译和应用依赖 WebKit。Cookie 接口及两端实现已提供，但播放器请求尚未接入 Cookie，也没有跨设备 Cookie 同步。
+> **当前阶段：** Android 提供 APK 下载，iOS 通过 Xcode 从源码构建。项目正在迁移到 Kotlin Multiplatform 与 Compose Multiplatform，双端功能及运行验证进度尚未完全对齐。
 
-迁移确认可用后，初期计划只保留 `main`；`dev` 留待以后需要时建立。旧 Android worktree 已在确认源码与 GitHub `Android` 分支一致后按维护者要求删除；现有本地和远端分支尚未删除，远端发布策略不变。目录清理不代表迁移已验证可用。
+## 开始使用
 
-## 当前能力
+1. **打开视频网页。** 在应用内输入网址，并在网页中开始播放，让页面加载媒体资源。
+2. **扫描媒体候选。** Android 点击右下角圆形嗅探按钮；iOS 可在浏览器菜单中选择「扫描媒体资源」。
+3. **选择资源播放。** 优先尝试 `.m3u8` 或 `.mp4` 候选，进入原生播放器。
+4. **添加字幕。** 选择字幕文件、粘贴 SRT / VTT 文本，或打开「在线字幕」搜索并应用结果。
 
-- Android WebView / iOS WKWebView 内置浏览器，共享地址栏、工具栏和多标签页 UI。
-- 支持原生 UA 与自定义 UA 选项。
-- 浏览器菜单支持收藏当前网页。
-- 设置页二级收藏夹支持打开收藏网页和删除收藏。
-- 注入 JS 嗅探 `video/source/a`、`fetch`、`XMLHttpRequest`、`performance` 资源。
-- 候选资源按 `HLS` / `MP4` / `DASH` / `Segment` / `Blob` 分类。
-- 手动点击扫描媒体资源，查看候选；Android 用 Media3、iOS 用 AVPlayer 播放。
-- 支持本地 SRT/VTT 文件和粘贴字幕文本。
-- 支持第三方字幕接口在线搜索，点选结果后直接下载应用。
-- 支持在播放器内弹出 Subtitlecat 搜索页，自行下载后再导入字幕文件。
-- KMP 共用 SRT/VTT 解析与时间轴，播放器保留原生字幕 overlay 和偏移、字号等设置。
-- 使用自定义 `AVPlayerLayer`，避免系统播放器控制条和字幕控制条重叠。
-- 进入播放器时设置 `AVAudioSession.playback`，避免 iPhone 静音开关导致无声。
-- 进入播放器时自动切到横屏，退出播放器后恢复浏览器页方向。
-- 播放时控制条会自动隐藏，点击视频画面可重新呼出。
-- 设置页支持添加 AdGuard/EasyList raw 规则订阅，在设备上自动下载、转换并编译为 WebKit 内容拦截规则。
-- 广告屏蔽支持总开关、每天自动更新、多个订阅、失败回退和规则统计。
+需要从 Subtitlecat 找字幕时，可在「在线字幕」中打开其网页，下载文件后再通过「字幕文件」导入。
 
-## 使用
-
-### iOS
-
-先安装 JDK（当前使用 JDK 22）；首次构建还需要联网下载 Gradle/Kotlin Native/Compose 依赖。Xcode 构建阶段自动执行 `:composeApp:embedAndSignAppleFrameworkForXcode`，生成 `ComposeApp` framework 并复制共享资源。
-
-1. 用 Xcode 打开 `iosApp/SniffSubPlayer.xcodeproj`。
-2. 在 Signing & Capabilities 里选择自己的 Team。
-3. 跑到 iPhone。
-4. 在浏览器里打开站点并播放视频。
-5. 在浏览器菜单点击“扫描媒体资源”，选择 `.m3u8` 或 `.mp4` 候选进入播放器。
-6. 在播放器里导入字幕文件、粘贴 SRT/VTT，或点“在线字幕”搜索。
-7. 如需网页广告屏蔽，在“设置 → 广告屏蔽”中添加 HTTPS raw 规则链接并点击“立即更新规则”。
+## 下载安装
 
 ### Android
 
-在 Android Studio 中打开仓库根目录，选择 `app` 模块。需要 Android SDK 36；保持原有 application ID、偏好设置键和发布签名配置。Android 的所有编译和打包一律在 GitHub CI 进行，不在本地执行。
+前往 **[发布页](https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest)**，在 Assets 中下载 `SniffSubPlayer-Android.apk` 并安装。
 
-`.github/workflows/android-build.yml` 提供 `Build and Publish Android` 工作流：每次推送到 `main` 自动编译签名 Release APK，也可在 `main` 手动触发。连续推送排队执行（最多 100 个等待任务），不取消已在执行的构建；不执行测试。
+- **设备要求：** Android 9（API 28）及以上，ARM64。
+- **校验文件：** 同一版本附带 `SHA256SUMS.txt`。
+- **更新记录：** 每个 Release 包含该版本的更新说明。
 
-APK 同时保存为 Actions artifact，并通过已有 GitHub App 直接上传到专用公开仓库 `snifferhub/SniffSubPlayer-Releases` 的 GitHub Release，资产名保持 `SniffSubPlayer-Android.apk`，附带 `SHA256SUMS.txt`。该仓库为跨平台发布入口，后续可添加 iOS 等其他平台的包；不再推送该仓库的 `packages` 分支触发二次发布，现有历史 Release 不变。源码仓库仅新增对应版本标签，用于追踪后续更新说明的提交范围，不重复发布 APK。
+### iOS
 
-构建号取工作流计数与已有公开 Release/源码标签最大构建号加一的较大值，避免工作流迁移、失败重试导致版本号回退或复用。发布标签继续采用 `android-v<versionName>-build.<build>`，APK `versionCode` 继续采用 `10000 + build`，与应用内更新逻辑兼容。更新说明使用 git-cliff 从提交生成，包含共享 Kotlin/Compose 改动；从旧 Android 分支切换到不同提交历史的 KMP main 时，首次说明基于当前分支历史生成。
+当前安装方式为源码构建，需要 macOS、Xcode、JDK 和自己的签名配置。
 
-沿用源码仓库的以下配置：
+打开 `iosApp/SniffSubPlayer.xcodeproj`，选择自己的 Team 后构建并安装。依赖准备和构建说明见 **[iOS 本地构建](docs/DEVELOPMENT.md#ios-本地构建)**。
 
-| 类型 | 名称 |
-| --- | --- |
-| Secrets | `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` |
-| Secret | `ANDROID_UPDATES_APP_PRIVATE_KEY` |
-| Variable | `ANDROID_UPDATES_APP_CLIENT_ID` |
+## 能做什么
 
-GitHub App 需要安装在专用发布仓库并具有 Contents 写权限。构建后停止 Gradle 守护进程并删除临时签名文件；Kotlin 编译器在 Gradle 进程内执行，避免另留守护进程。
+| 功能 | 使用方式与当前范围 |
+| :--- | :--- |
+| 网页浏览 | Android WebView / iOS WKWebView；支持原生与自定义 UA。Android 当前为单页面，iOS 提供标签页。 |
+| 媒体嗅探 | 识别 HLS、MP4、DASH、分片和 Blob 等候选；识别到资源不代表当前播放器一定支持播放。 |
+| 原生播放 | Android 使用 Media3，iOS 使用 AVPlayer；播放控制条可自动隐藏。 |
+| 外挂字幕 | 导入或粘贴 SRT / VTT；支持字幕偏移、字号调整及在线搜索。 |
+| 网页收藏 | 在浏览器菜单收藏当前网页，在「设置 → 收藏夹」中打开或删除。 |
+| 广告屏蔽 | 在「设置 → 广告屏蔽」管理 AdGuard / EasyList 规则订阅，支持总开关、每天自动更新与规则统计。 |
 
-## 验证
+## 使用前了解
 
-项目约定：不新增测试；原有测试文件保留，测试执行由维护者指定。Android 编译在 GitHub CI，iOS 编译暂时在本地。CI 触发、Git 提交和推送须单独授权。
+- **Blob 与分片不等于完整视频。** `blob:` 地址不能直接交给原生播放器；请寻找背后的 `.m3u8` / `.mp4` 等完整资源。
+- **部分站点可能无法播放。** 播放器请求尚未接入浏览器 Cookie 服务，也没有本地媒体代理；复杂防盗链、跨域和重定向场景仍需完善。
+- **Android 多标签页尚未实现。** 当前保持单会话、单 WebView；iOS 标签页也尚未跨进程保存。
+- **在线字幕依赖第三方服务。** Subtitlecat 目前作为网页打开，下载后需手动导入字幕文件。
+- **迁移仍在进行。** iOS 工程部署目标为 16.0，最低版本运行兼容性与旧数据迁移仍待设备验证。已记录的编译结果见[构建与验证记录](docs/DEVELOPMENT.md#构建与验证记录)。
 
-GitHub CI 中的 Android 编译入口（工作流注入签名环境变量和递增的构建号）：
+## 参与开发
 
-```sh
-./gradlew :app:assembleRelease -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
-  -Pkotlin.compiler.execution.strategy=in-process --no-daemon
-```
+两端在同一仓库维护：`shared` 负责共享业务逻辑与平台服务，`composeApp` 负责共享界面，`app` 和 `iosApp` 分别承载 Android 与 iOS 宿主。
 
-iOS 模拟器目标纯编译（Apple Silicon）：
+工程结构、迁移边界、构建命令、签名发布配置和后续计划集中在 **[开发与维护](docs/DEVELOPMENT.md)**。修改前请阅读 [仓库协作规则](AGENTS.md)：Android 编译仅在 GitHub CI 执行，iOS 暂时本地构建，测试与设备验证按维护者指定流程进行。
 
-```sh
-xcodebuild -project iosApp/SniffSubPlayer.xcodeproj \
-  -scheme SniffSubPlayer \
-  -configuration Debug \
-  -sdk iphonesimulator \
-  -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath /private/tmp/SniffSubPlayerKmpDerivedData \
-  build CODE_SIGNING_ALLOWED=NO ARCHS=arm64
-```
+## 致谢与许可
 
-工具链固定为 Kotlin 2.2.21、Compose Multiplatform 1.9.3、AGP 8.11.1、Gradle 8.14.3。本机使用 Xcode 27.1，需以实际构建结果验证兼容性。编译成功不代表 WebView 手势、跨标签页媒体、Cookie 或真机播放已验证。
+感谢 **Linux.do 时光Alex**。
 
-2026-10-26：设置/收藏 UI 共享、iOS 偏好持久化迁移及重复 Swift 模型清理后，iOS arm64 模拟器目标本地构建通过，包含 Kotlin/Native framework、Swift 宿主及链接检查。共享嗅探脚本随应用资源打包。Android 最终改动待 GitHub CI 构建；未新增或运行测试，尚未启动应用验证，旧数据迁移与设置交互也尚未进行设备验证。Xcode 报告本机 CoreSimulator 服务版本落后于已安装 Xcode，且链接器对 ICU 数据对象的 17.2 构建版本与项目 iOS 16 部署目标给出警告；本轮没有修改系统组件或提高部署目标，iOS 16 运行兼容性仍待验证。
+iOS 广告规则转换使用 [AdguardTeam/SafariConverterLib](https://github.com/AdguardTeam/SafariConverterLib)，其许可信息见[上游 LICENSE](https://github.com/AdguardTeam/SafariConverterLib/blob/master/LICENSE)。
 
-## MVP 限制
-
-- Android 当前仅提供单页面浏览，不显示网页标签栏；嗅探资源统一从右下角圆形按钮进入。
-- `blob:` 不能直接播放，需要选择其背后的 `.m3u8` / `.mp4` 候选。
-- 当前还没有本地代理，Referer/Cookie 复杂防盗链资源可能播放失败。
-- HLS 分片、key、相对路径重写会在下一阶段通过本地代理补齐。
-- Subtitlecat 当前以内置网页弹窗打开；站内文件下载完成后，需要通过“字幕文件”导入。
-
-## 下一阶段
-
-- TODO：Android 多标签页浏览（标签栏、新建/切换/关闭、各页面独立历史与状态）；当前保持单会话、单 WebView。
-- 将共享 Cookie 服务接入播放器请求，并验证媒体跨域、重定向和子资源行为。
-- 将字幕搜索、播放器通用状态和广告规则更新流程逐步迁入共享层，原生播放与规则编译能力保留平台适配。
-- 增加本地 `127.0.0.1` 代理，重写 m3u8 和分片 URL。
-- 把原 userscript 的字幕样式预设、番号识别策略进一步搬进播放器。
-
-## 致谢
-
-**Linux.do 时光Alex**
-
-规则转换使用 GPLv3 许可的 [AdguardTeam/SafariConverterLib](https://github.com/AdguardTeam/SafariConverterLib)。分发修改后的应用前请确认并遵守相关许可证要求。
+本项目采用 [GNU General Public License v3.0](LICENSE)（`GPL-3.0-only`）。第三方依赖适用各自的许可证。
