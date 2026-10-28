@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.view.LayoutInflater
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -160,7 +161,6 @@ fun PlayerScreen(
         gesturesEnabled = false
         cancelGestures()
         attachedView[0]?.player = null
-        attachedView[0]?.keepScreenOn = false
         player.pause()
         player.clearVideoSurface()
         onBack()
@@ -197,10 +197,38 @@ fun PlayerScreen(
         onDispose {
             temporarySpeed.stop()
             attachedView[0]?.player = null
-            attachedView[0]?.keepScreenOn = false
             player.playWhenReady = false
             player.clearVideoSurface()
             player.release()
+        }
+    }
+
+    DisposableEffect(player, lifecycle, activity) {
+        val window = activity?.window
+        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        val wasKeepingScreenOn = window?.attributes?.flags?.and(flag) != 0
+
+        fun updateKeepScreenOn() {
+            if (player.isPlaying && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                window?.addFlags(flag)
+            } else if (!wasKeepingScreenOn) {
+                window?.clearFlags(flag)
+            }
+        }
+
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                updateKeepScreenOn()
+            }
+        }
+        val observer = LifecycleEventObserver { _, _ -> updateKeepScreenOn() }
+        player.addListener(listener)
+        lifecycle.addObserver(observer)
+        updateKeepScreenOn()
+        onDispose {
+            player.removeListener(listener)
+            lifecycle.removeObserver(observer)
+            if (!wasKeepingScreenOn) window?.clearFlags(flag)
         }
     }
 
@@ -216,10 +244,8 @@ fun PlayerScreen(
             if (event == Lifecycle.Event.ON_STOP) {
                 resumePlayback = player.playWhenReady
                 player.pause()
-                attachedView[0]?.keepScreenOn = false
             } else if (event == Lifecycle.Event.ON_RESUME && resumePlayback) {
                 resumePlayback = false
-                attachedView[0]?.keepScreenOn = true
                 player.play()
             }
         }
@@ -280,7 +306,6 @@ fun PlayerScreen(
                     this.player = player
                     useController = false
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    keepScreenOn = true
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
                 }
             },
@@ -288,7 +313,6 @@ fun PlayerScreen(
             onReset = null,
             onRelease = {
                 it.player = null
-                it.keepScreenOn = false
                 if (attachedView[0] === it) attachedView[0] = null
             },
             modifier = Modifier.fillMaxSize(),
