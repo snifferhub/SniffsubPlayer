@@ -1,4 +1,4 @@
-name: Build and Publish Android
+name: Build and Publish Android and iOS
 
 on:
   push:
@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
+  # Keep the original group so pending Android-only runs cannot race this publisher.
   group: android-main-release
   cancel-in-progress: false
   queue: max
@@ -21,10 +22,14 @@ env:
   PUBLIC_RELEASE_REPOSITORY: snifferhub/SniffSubPlayer-Releases
 
 jobs:
-  android:
+  prepare:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      build: ${{ steps.release.outputs.build }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -39,9 +44,9 @@ jobs:
         run: |
           gh api --paginate --slurp \
             "repos/$PUBLIC_RELEASE_REPOSITORY/releases?per_page=100" \
-            > "$RUNNER_TEMP/android-releases.json"
+            > "$RUNNER_TEMP/releases.json"
           python3 .github/scripts/release_notes.py prepare \
-            --releases "$RUNNER_TEMP/android-releases.json" \
+            --releases "$RUNNER_TEMP/releases.json" \
             --head "$GITHUB_SHA" \
             --run-number "$GITHUB_RUN_NUMBER"
 
@@ -52,10 +57,28 @@ jobs:
           config: .github/cliff.toml
           args: ${{ steps.release.outputs.range }}
         env:
-          OUTPUT: ${{ runner.temp }}/android-release-notes.md
+          OUTPUT: ${{ runner.temp }}/release-notes.md
 
       - name: Finalize release notes
-        run: python3 .github/scripts/release_notes.py finalize --notes "$RUNNER_TEMP/android-release-notes.md"
+        run: python3 .github/scripts/release_notes.py finalize --notes "$RUNNER_TEMP/release-notes.md"
+
+      - name: Share release notes with publisher
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes-${{ steps.release.outputs.build }}
+          path: ${{ runner.temp }}/release-notes.md
+          retention-days: 7
+          if-no-files-found: error
+
+  android:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Java
         id: java
@@ -89,7 +112,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          RELEASE_BUILD_NUMBER: ${{ steps.release.outputs.build }}
+          RELEASE_BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
         run: |
           ./gradlew :app:assembleRelease \
             -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
@@ -111,14 +134,95 @@ jobs:
           "$APKSIGNER" verify "$APK"
           mkdir -p dist
           cp "$APK" dist/SniffSubPlayer-Android.apk
-          (cd dist && sha256sum SniffSubPlayer-Android.apk > SHA256SUMS.txt)
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v7
         with:
-          name: SniffSubPlayer-Android-${{ steps.release.outputs.build }}
-          path: dist/*
+          name: SniffSubPlayer-Android-${{ needs.prepare.outputs.build }}
+          path: dist/SniffSubPlayer-Android.apk
+          compression-level: 0
+          retention-days: 7
           if-no-files-found: error
+
+  ios:
+    needs: prepare
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      # Xcode's Gradle phase inherits these options; no persistent Java daemons.
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        id: java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Cache Kotlin Native toolchain
+        uses: actions/cache@v5
+        with:
+          path: ~/.konan
+          key: ${{ runner.os }}-${{ runner.arch }}-konan-${{ hashFiles('gradle/libs.versions.toml') }}
+
+      - name: Build and package unsigned iOS IPA
+        env:
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
+        run: bash .github/scripts/build_ios_ipa.sh "$APP_VERSION" "$RELEASE_BUILD_NUMBER" "$RUNNER_TEMP/ios-release"
+
+      - name: Stop build daemons
+        if: always() && steps.java.outcome == 'success'
+        run: ./gradlew --stop
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SniffSubPlayer-iOS-${{ needs.prepare.outputs.build }}
+          path: ${{ runner.temp }}/ios-release/SniffSubPlayer-iOS-unsigned.ipa
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, android, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed APK
+        uses: actions/download-artifact@v8
+        with:
+          name: SniffSubPlayer-Android-${{ needs.prepare.outputs.build }}
+          path: dist
+
+      - name: Download unsigned IPA
+        uses: actions/download-artifact@v8
+        with:
+          name: SniffSubPlayer-iOS-${{ needs.prepare.outputs.build }}
+          path: dist
+
+      - name: Download release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes-${{ needs.prepare.outputs.build }}
+          path: notes
+
+      - name: Verify both packages and create shared checksums
+        run: |
+          test -s dist/SniffSubPlayer-Android.apk
+          test -s dist/SniffSubPlayer-iOS-unsigned.ipa
+          test -s notes/release-notes.md
+          cd dist
+          sha256sum SniffSubPlayer-Android.apk SniffSubPlayer-iOS-unsigned.ipa > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
 
       - name: Create repository-scoped release bot token
         id: release_bot
@@ -131,27 +235,40 @@ jobs:
           permission-contents: write
 
       - name: Record source tag for subsequent release notes
+        # Installed Android clients still require the android-v<version>-build.<build> format.
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" > /dev/null
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/source-tag.json" 2>/dev/null; then
+            test "$(jq -r .object.sha "$RUNNER_TEMP/source-tag.json")" = "$GITHUB_SHA"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" > /dev/null
+          fi
 
-      - name: Publish APK to dedicated release repository
+      - name: Publish Android and iOS together to release repository
         env:
           GH_TOKEN: ${{ steps.release_bot.outputs.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          APP_VERSION: ${{ steps.release.outputs.version }}
-          RELEASE_BUILD_NUMBER: ${{ steps.release.outputs.build }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
         run: |
-          test -s "$RUNNER_TEMP/android-release-notes.md"
-          gh release create "$RELEASE_TAG" \
-            dist/SniffSubPlayer-Android.apk dist/SHA256SUMS.txt \
+          if gh release view "$RELEASE_TAG" --repo "$PUBLIC_RELEASE_REPOSITORY" \
+            --json isDraft > "$RUNNER_TEMP/public-release.json" 2>/dev/null; then
+            # A failed publish may leave a draft. Never overwrite a public release.
+            test "$(jq -r .isDraft "$RUNNER_TEMP/public-release.json")" = true
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$PUBLIC_RELEASE_REPOSITORY" --target main --draft \
+              --title "SniffSubPlayer $APP_VERSION (build $RELEASE_BUILD_NUMBER)" \
+              --notes-file notes/release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" \
+            dist/SniffSubPlayer-Android.apk dist/SniffSubPlayer-iOS-unsigned.ipa dist/SHA256SUMS.txt \
+            --repo "$PUBLIC_RELEASE_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" \
             --repo "$PUBLIC_RELEASE_REPOSITORY" \
-            --target main \
-            --title "SniffSubPlayer Android $APP_VERSION (build $RELEASE_BUILD_NUMBER)" \
-            --notes-file "$RUNNER_TEMP/android-release-notes.md" \
-            --latest
-          printf 'Published Android build %s to %s\n' \
+            --notes-file notes/release-notes.md --draft=false --latest
+          printf 'Published Android APK and unsigned iOS IPA, build %s, to %s\n' \
             "$RELEASE_BUILD_NUMBER" "$PUBLIC_RELEASE_REPOSITORY" >> "$GITHUB_STEP_SUMMARY"

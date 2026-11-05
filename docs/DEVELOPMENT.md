@@ -40,15 +40,17 @@ iOS 首次读取时，将原有 `SniffSubPlayer.userAgent`、`SniffSubPlayer.pla
 
 iOS 工程部署目标为 16.0；这一配置不代表已完成最低系统版本的运行验证。设备安装与应用启动按维护者指定流程进行。
 
-## Android CI 与发布
+## Android / iOS CI 与发布
 
 在 Android Studio 中打开仓库根目录，选择 `app` 模块。需要 Android SDK 36；保持原有 application ID、偏好设置键和发布签名配置。Android 的所有编译和打包一律在 GitHub CI 进行，不在本地执行。
 
-`.github/workflows/android-build.yml` 提供 `Build and Publish Android` 工作流：每次推送到 `main` 自动编译签名 Release APK，也可在 `main` 手动触发。连续推送排队执行，不取消已在执行的构建；不执行测试。
+`.github/workflows/android-build.yml` 提供 `Build and Publish Android and iOS` 工作流：每次推送到 `main`，先解析统一的版本号、构建号和更新说明，再并行编译签名 Android Release APK 与未签名 iOS 真机 arm64 Release IPA；两端都成功后统一发布。也可在 `main` 手动触发。连续推送排队执行，不取消已在执行的构建；不执行测试。
 
-APK 同时保存为 Actions artifact，并通过已有 GitHub App 直接上传到专用公开仓库 `snifferhub/SniffSubPlayer-Releases` 的 GitHub Release，资产名保持 `SniffSubPlayer-Android.apk`，附带 `SHA256SUMS.txt`。该仓库为跨平台发布入口，后续可添加 iOS 等其他平台的包；不再推送该仓库的 `packages` 分支触发二次发布，现有历史 Release 不变。源码仓库仅新增对应版本标签，用于追踪后续更新说明的提交范围，不重复发布 APK。
+安装包保存为保留 7 天的 Actions artifacts，并通过已有 GitHub App 上传到专用公开仓库 `snifferhub/SniffSubPlayer-Releases` 的同一个 GitHub Release：`SniffSubPlayer-Android.apk`、`SniffSubPlayer-iOS-unsigned.ipa` 和包含两者校验值的 `SHA256SUMS.txt`。先上传为草稿，所有文件上传完成后再公开并设为 Latest；任一平台构建失败时不发布。源码仓库仅新增对应版本标签，用于追踪后续更新说明的提交范围，不重复保存安装包。
 
-构建号取工作流计数与已有公开 Release/源码标签最大构建号加一的较大值，避免工作流迁移、失败重试导致版本号回退或复用。发布标签继续采用 `android-v<versionName>-build.<build>`，APK `versionCode` 继续采用 `10000 + build`，与应用内更新逻辑兼容。更新说明使用 git-cliff 从提交生成，包含共享 Kotlin/Compose 改动；从旧 Android 分支切换到不同提交历史的 KMP main 时，首次说明基于当前分支历史生成。
+构建号取工作流计数与已有公开 Release/源码标签最大构建号加一的较大值，避免工作流迁移、失败重试导致版本号回退或复用。发布标签继续采用 `android-v<versionName>-build.<build>`，APK `versionCode` 继续采用 `10000 + build`，与现有 Android 应用内更新逻辑兼容。iOS 的 `CFBundleShortVersionString` 与 Android 的 `versionName` 一致，`CFBundleVersion` 使用同一构建号。更新说明使用 git-cliff 从提交生成，包含两端和共享 Kotlin/Compose 改动；从旧 Android 分支切换到不同提交历史的 KMP main 时，首次说明基于当前分支历史生成。
+
+iOS 使用标准 `macos-26` runner 和 JDK 21，通过 `.github/scripts/build_ios_ipa.sh` 构建 `iphoneos` 目标并打包 `Payload/SniffSubPlayer.app`。脚本校验真机平台、arm64 架构、版本号和共享嗅探资源。CI 不需要 Apple 开发者证书或账号；下载的 IPA 需要使用者通过侧载工具签名后安装，不能直接安装。模拟器产物不能作为侧载包使用。
 
 沿用源码仓库的以下配置：
 
@@ -63,13 +65,19 @@ GitHub App 需要安装在专用发布仓库并具有 Contents 写权限。构�
 
 ## 构建与验证记录
 
-项目约定：不新增测试；原有测试文件保留，测试执行由维护者指定。Android 编译在 GitHub CI，iOS 编译暂时在本地。CI 触发、Git 提交和推送须单独授权。
+项目约定：不新增测试；原有测试文件保留，测试执行由维护者指定。Android 编译仅在 GitHub CI，iOS 可在本地或 CI 编译。CI 触发、Git 提交和推送须单独授权。
 
 GitHub CI 中的 Android 编译入口（工作流注入签名环境变量和递增的构建号）：
 
 ```sh
 ./gradlew :app:assembleRelease -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
   -Pkotlin.compiler.execution.strategy=in-process --no-daemon
+```
+
+iOS 真机 Release IPA 打包（无需 Apple 开发者证书；版本号与构建号由 CI 注入）：
+
+```sh
+bash .github/scripts/build_ios_ipa.sh 1.1.0 33 /private/tmp/SniffSubPlayer-iOS-release
 ```
 
 iOS 模拟器目标纯编译（Apple Silicon）：

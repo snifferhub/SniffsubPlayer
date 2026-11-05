@@ -1,4 +1,4 @@
-"""Resolve the source range of the last Android release actually published publicly."""
+"""Resolve synchronized Android/iOS release metadata without changing Android tags."""
 
 import argparse
 import json
@@ -33,7 +33,7 @@ def release_range(releases: list, head: str, current_tag: str) -> str:
         version = tuple(int(part) for part in match[1].split("."))
         candidates.append(((*version, int(match[2])), tag))
     if not candidates:
-        # A first release includes the Android history, filtered by cliff.toml.
+        # A first release includes the source history, filtered by cliff.toml.
         return head_sha
 
     _, tag = max(candidates)
@@ -81,10 +81,17 @@ def finalize_notes(path: Path, summary_path: Path | None = None) -> None:
     notes = re.sub(r"\n{3,}", "\n\n", path.read_text(encoding="utf-8").strip())
     if not any(line.startswith("- ") for line in notes.splitlines()):
         notes = MAINTENANCE_NOTES.strip()
+    notes += (
+        "\n\n安装包\n\n"
+        "- Android：下载 `SniffSubPlayer-Android.apk` 安装。\n"
+        "- iOS：下载 `SniffSubPlayer-iOS-unsigned.ipa`，使用 AltStore Classic 等侧载工具签名安装；"
+        "IPA 未包含开发者证书，不能直接安装。\n"
+        "- `SHA256SUMS.txt` 包含两个安装包的 SHA-256 校验值。"
+    )
     path.write_text(notes + "\n", encoding="utf-8")
     if summary_path:
         with summary_path.open("a", encoding="utf-8") as summary:
-            summary.write("## 自动生成的 Android 更新说明\n\n" + notes + "\n")
+            summary.write("## 自动生成的更新说明\n\n" + notes + "\n")
 
 
 def main() -> None:

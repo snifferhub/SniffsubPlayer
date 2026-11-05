@@ -1,4 +1,4 @@
-# Public, user-facing notes from Android commit subjects. No AI or source links.
+# Public, user-facing notes for both platforms. No AI or source links.
 [changelog]
 header = "本次更新\n\n"
 body = """
@@ -23,14 +23,19 @@ sort_commits = "oldest"
 # The workflow supplies an explicit range; unpublished tags must not split it.
 ignore_tags = ".*"
 include_paths = [
+    ".github/scripts/build_ios_ipa.sh",
     "app/src/main/**",
     "app/build.gradle.kts",
     "shared/src/commonMain/**",
     "shared/src/androidMain/**",
+    "shared/src/iosMain/**",
     "shared/build.gradle.kts",
     "composeApp/src/commonMain/**",
     "composeApp/src/androidMain/**",
+    "composeApp/src/iosMain/**",
     "composeApp/build.gradle.kts",
+    "iosApp/SniffSubPlayer/**",
+    "iosApp/SniffSubPlayer.xcodeproj/project.pbxproj",
     "build.gradle.kts",
     "settings.gradle.kts",
     "gradle.properties",

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest"><strong>下载 Android</strong></a>
+  <a href="https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest"><strong>下载 Android / iOS</strong></a>
   &nbsp; · &nbsp;
   <a href="#开始使用">使用指南</a>
   &nbsp; · &nbsp;
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  Android 9+ · arm64 &nbsp; / &nbsp; iOS 源码构建 &nbsp; / &nbsp; KMP 迁移中
+  Android 9+ · arm64 &nbsp; / &nbsp; iOS 16+ · 未签名 IPA &nbsp; / &nbsp; KMP 迁移中
 </p>
 
 ---
@@ -29,7 +29,7 @@
 | :--- | :--- | :--- |
 | 打开站点、收藏页面，按需切换 UA 和广告屏蔽设置。 | 扫描网页中的媒体候选，选择 `.m3u8` / `.mp4` 等资源播放。 | 导入本地文件、粘贴文本或在线搜索，调整字幕偏移与字号。 |
 
-> **当前阶段：** Android 提供 APK 下载，iOS 通过 Xcode 从源码构建。项目正在迁移到 Kotlin Multiplatform 与 Compose Multiplatform，双端功能及运行验证进度尚未完全对齐。
+> **当前阶段：** 同一版本提供 Android APK 和供侧载工具签名的 iOS IPA。项目正在迁移到 Kotlin Multiplatform 与 Compose Multiplatform，双端功能及运行验证进度尚未完全对齐。
 
 ## 开始使用
 
@@ -52,9 +52,9 @@
 
 ### iOS
 
-当前安装方式为源码构建，需要 macOS、Xcode、JDK 和自己的签名配置。
+前往 **[发布页](https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest)**，在 Assets 中下载 `SniffSubPlayer-iOS-unsigned.ipa`，使用 [AltStore Classic](https://faq.altstore.io/altstore-classic/your-altstore) 等侧载工具签名并安装。IPA 不包含开发者证书，不能直接安装；使用免费 Apple 账户签名时需要定期刷新。`SHA256SUMS.txt` 同时包含 APK 和 IPA 的校验值。
 
-打开 `iosApp/SniffSubPlayer.xcodeproj`，选择自己的 Team 后构建并安装。依赖准备和构建说明见 **[iOS 本地构建](docs/DEVELOPMENT.md#ios-本地构建)**。
+也可以打开 `iosApp/SniffSubPlayer.xcodeproj`，选择自己的 Team 后从源码构建并安装。依赖准备和构建说明见 **[iOS 本地构建](docs/DEVELOPMENT.md#ios-本地构建)**。
 
 ## 能做什么
 
@@ -79,7 +79,7 @@
 
 两端在同一仓库维护：`shared` 负责共享业务逻辑与平台服务，`composeApp` 负责共享界面，`app` 和 `iosApp` 分别承载 Android 与 iOS 宿主。
 
-工程结构、迁移边界、构建命令、签名发布配置和后续计划集中在 **[开发与维护](docs/DEVELOPMENT.md)**。修改前请阅读 [仓库协作规则](AGENTS.md)：Android 编译仅在 GitHub CI 执行，iOS 暂时本地构建，测试与设备验证按维护者指定流程进行。
+工程结构、迁移边界、构建命令、签名发布配置和后续计划集中在 **[开发与维护](docs/DEVELOPMENT.md)**。修改前请阅读 [仓库协作规则](AGENTS.md)：Android 编译仅在 GitHub CI 执行，iOS 可在本地或 CI 构建，测试与设备验证按维护者指定流程进行。
 
 ## 致谢与许可
 
