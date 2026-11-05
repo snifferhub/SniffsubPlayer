@@ -470,7 +470,7 @@ fun PlayerScreen(
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 64.dp),
         ) {
-            PlayerFeedbackBubble("2× 快速播放 · 松手恢复")
+            PlayerFeedbackBubble("2×")
         }
     }
 }

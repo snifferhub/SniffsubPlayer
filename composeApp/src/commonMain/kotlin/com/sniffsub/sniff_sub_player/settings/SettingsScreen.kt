@@ -65,7 +65,7 @@ const val MACOS_SAFARI_USER_AGENT =
         "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
 val USER_AGENT_OPTIONS = listOf(
-    UserAgentOption("device_default", "设备原生（推荐）", ""),
+    UserAgentOption("device_default", "设备原生", ""),
     UserAgentOption("ipad_safari", "iPad Safari", IPAD_SAFARI_USER_AGENT),
     UserAgentOption("macos_safari", "macOS Safari", MACOS_SAFARI_USER_AGENT),
 )
@@ -124,10 +124,7 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 36.dp),
         ) {
-            SettingsSection(
-                title = "浏览器",
-                footer = "设备原生 UA 与当前系统 WebView 保持一致，兼容性最好。切换 UA 后刷新页面生效。",
-            ) {
+            SettingsSection(title = "浏览器") {
                 SettingsRow(
                     label = "User Agent",
                     value = selectedUserAgent.name,
@@ -135,12 +132,9 @@ fun SettingsScreen(
                     modifier = Modifier.testTag("user_agent_row"),
                 )
             }
-            SettingsSection(
-                title = "播放器",
-                footer = "颜色同时用于网页加载进度、播放进度和字幕调节滑杆。",
-            ) {
+            SettingsSection(title = "外观") {
                 SettingsRow(
-                    label = "进度条颜色",
+                    label = "强调色",
                     trailing = {
                         Box(
                             modifier = Modifier
@@ -153,13 +147,13 @@ fun SettingsScreen(
                 )
                 HorizontalDivider()
                 SettingsRow(
-                    label = "恢复默认",
+                    label = "恢复默认颜色",
                     labelColor = MaterialTheme.colorScheme.primary,
                     onClick = actions.onResetAccent,
                     modifier = Modifier.testTag("reset_accent_row"),
                 )
             }
-            SettingsSection(title = "收藏夹") {
+            SettingsSection {
                 SettingsRow(
                     label = "收藏夹",
                     value = preferences.bookmarks.size.toString(),
@@ -177,7 +171,7 @@ fun SettingsScreen(
                     modifier = Modifier.testTag("ad_block_row"),
                 )
             }
-            if (showAppUpdates) SettingsSection(title = "应用", footer = "从 GitHub 获取正式版本，下载完成后由系统确认安装。") {
+            if (showAppUpdates) SettingsSection(title = "应用") {
                 SettingsRow(
                     label = "检查更新",
                     value = updateSummary,
@@ -190,22 +184,21 @@ fun SettingsScreen(
     }
 
     if (showUserAgentDialog) {
+        var selectedValue by remember { mutableStateOf(preferences.userAgent) }
         AlertDialog(
             onDismissRequest = { showUserAgentDialog = false },
             title = { Text("User Agent") },
             text = {
                 Column {
-                    Text("切换后返回浏览器刷新页面生效")
                     USER_AGENT_OPTIONS.forEach { option ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .selectable(
-                                    selected = option.value == preferences.userAgent,
+                                    selected = option.value == selectedValue,
                                     role = Role.RadioButton,
                                     onClick = {
-                                        actions.onUserAgentSelected(option.value)
-                                        showUserAgentDialog = false
+                                        selectedValue = option.value
                                     },
                                 )
                                 .testTag("ua_${option.id}")
@@ -213,7 +206,7 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = option.value == preferences.userAgent,
+                                selected = option.value == selectedValue,
                                 onClick = null,
                             )
                             Spacer(Modifier.width(8.dp))
@@ -222,7 +215,15 @@ fun SettingsScreen(
                     }
                 }
             },
-            confirmButton = {},
+            confirmButton = {
+                TextButton(
+                    enabled = selectedValue != preferences.userAgent,
+                    onClick = {
+                        actions.onUserAgentSelected(selectedValue)
+                        showUserAgentDialog = false
+                    },
+                ) { Text("应用并刷新") }
+            },
             dismissButton = {
                 TextButton(onClick = { showUserAgentDialog = false }) { Text("取消") }
             },
@@ -236,7 +237,7 @@ fun SettingsScreen(
         val customColor = customHex.removePrefix("#").takeIf { it.length == 6 }?.toLongOrNull(16)
         AlertDialog(
             onDismissRequest = { showAccentDialog = false },
-            title = { Text("进度条颜色") },
+            title = { Text("强调色") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     ACCENT_COLOR_OPTIONS.chunked(4).forEach { colors ->
@@ -308,7 +309,6 @@ internal fun SettingsTopBar(title: String, onBack: () -> Unit, showBack: Boolean
 @Composable
 internal fun SettingsSection(
     title: String? = null,
-    footer: String? = null,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -330,14 +330,6 @@ internal fun SettingsSection(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column { content() }
-        }
-        if (footer != null) {
-            Text(
-                text = footer,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 7.dp),
-            )
         }
     }
 }

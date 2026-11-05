@@ -14,18 +14,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -106,6 +102,7 @@ fun SubtitleSearchScreen(
     var results by remember { mutableStateOf<List<OnlineSubtitle>>(emptyList()) }
     var status by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
+    var hasSearched by remember { mutableStateOf(false) }
     var downloadingUrl by remember { mutableStateOf<String?>(null) }
     var showPasteEditor by remember { mutableStateOf(false) }
     var showSubtitlecat by remember { mutableStateOf(false) }
@@ -149,18 +146,19 @@ fun SubtitleSearchScreen(
     }
 
     fun search() {
+        if (searching || downloadingUrl != null) return
         val normalizedQuery = query.trim()
         if (normalizedQuery.isEmpty()) {
             status = "请输入番号或关键词后再搜索"
             return
         }
         searching = true
-        status = "正在搜索字幕: $normalizedQuery"
+        hasSearched = true
+        status = ""
         scope.launch {
             repository.search(normalizedQuery)
                 .onSuccess { found ->
                     results = found
-                    status = if (found.isEmpty()) "未找到在线字幕" else "找到 ${found.size} 个字幕"
                 }
                 .onFailure { error ->
                     status = "在线字幕搜索失败: ${error.message ?: error::class.simpleName.orEmpty()}"
@@ -193,16 +191,6 @@ fun SubtitleSearchScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "关闭")
                     }
                 },
-                actions = {
-                    IconButton(
-                        onClick = { documentLauncher.launch(SUBTITLE_DOCUMENT_MIME_TYPES.toTypedArray()) },
-                    ) {
-                        Icon(Icons.Default.FileOpen, contentDescription = "导入字幕文件")
-                    }
-                    IconButton(onClick = { showPasteEditor = true }) {
-                        Icon(Icons.Default.ContentPaste, contentDescription = "粘贴字幕")
-                    }
-                },
             )
         },
     ) { innerPadding ->
@@ -227,8 +215,12 @@ fun SubtitleSearchScreen(
                     keyboardActions = KeyboardActions(onSearch = { search() }),
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = ::search, enabled = !searching) {
-                    Icon(Icons.Default.Search, contentDescription = "字幕搜索")
+                IconButton(onClick = ::search, enabled = !searching && downloadingUrl == null) {
+                    if (searching) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Search, contentDescription = "字幕搜索")
+                    }
                 }
             }
 
@@ -238,12 +230,17 @@ fun SubtitleSearchScreen(
                     .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { showSubtitlecat = true }) {
-                    Text("打开 Subtitlecat")
+                TextButton(onClick = { showSubtitlecat = true }, modifier = Modifier.weight(1f)) {
+                    Text("Subtitlecat")
                 }
-                if (searching) {
-                    Spacer(Modifier.size(8.dp))
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                TextButton(
+                    onClick = { documentLauncher.launch(SUBTITLE_DOCUMENT_MIME_TYPES.toTypedArray()) },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("导入文件")
+                }
+                TextButton(onClick = { showPasteEditor = true }, modifier = Modifier.weight(1f)) {
+                    Text("粘贴字幕")
                 }
             }
 
@@ -256,7 +253,7 @@ fun SubtitleSearchScreen(
                 )
             }
 
-            if (results.isEmpty()) {
+            if (results.isEmpty() && !searching && status.isEmpty()) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -264,12 +261,9 @@ fun SubtitleSearchScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Text("暂无字幕结果", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(6.dp))
                     Text(
-                        "可先在线搜索，或打开 Subtitlecat 自行下载后导入字幕文件。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        if (hasSearched) "未找到字幕" else "暂无字幕",
+                        style = MaterialTheme.typography.titleMedium,
                     )
                 }
             } else {
@@ -277,10 +271,7 @@ fun SubtitleSearchScreen(
                     items(results) { item ->
                         ListItem(
                             headlineContent = {
-                                Text(item.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            },
-                            supportingContent = {
-                                Text(item.url, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(item.displayName, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             },
                             trailingContent = {
                                 if (downloadingUrl == item.url) {
@@ -288,7 +279,7 @@ fun SubtitleSearchScreen(
                                 }
                             },
                             modifier = Modifier.clickable(
-                                enabled = downloadingUrl == null,
+                                enabled = downloadingUrl == null && !searching,
                                 onClickLabel = "载入字幕",
                                 onClick = { download(item) },
                             ),
@@ -327,7 +318,6 @@ fun PasteSubtitleScreen(
         OutlinedTextField(
             value = text,
             onValueChange = { text = it },
-            placeholder = { Text("在这里粘贴 SRT 或 VTT 字幕…") },
             textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
             modifier = Modifier
                 .fillMaxSize()

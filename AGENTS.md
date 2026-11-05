@@ -15,3 +15,7 @@
 - After the migration is verified usable, the intended initial branch layout is `main` only; do not create `dev` yet. Branch deletion requires operation-specific authorization. Removal of the old Android worktree does not establish migration or runtime validation.
 - Keep Android application ID, signing configuration, preference keys, and monotonically increasing release version codes intact.
 - Do not introduce Flutter or Dart. Preserve the existing visual design when extracting shared Compose UI.
+
+# UI/UX Design
+
+- Cut taglines, helper text and secondary labels. If a screen needs them to make sense, fix the layout.

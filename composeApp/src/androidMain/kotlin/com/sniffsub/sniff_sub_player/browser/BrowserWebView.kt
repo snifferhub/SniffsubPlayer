@@ -246,6 +246,8 @@ fun BrowserWebView(
             },
             update = { webView ->
                 controller.attach(webView)
+                val desiredUserAgent = state.userAgent.ifBlank { defaultUserAgent }
+                val userAgentChanged = webView.settings.userAgentString != desiredUserAgent
                 applyUserAgent(webView, state.userAgent, defaultUserAgent)
                 val requestedAddress = state.address.trim()
                 if (
@@ -254,6 +256,9 @@ fun BrowserWebView(
                     (webView.url.isNullOrEmpty() || requestedAddress != state.currentPageUrl)
                 ) {
                     webView.loadUrl(requestedAddress)
+                } else if (userAgentChanged && !webView.url.isNullOrBlank()) {
+                    viewModel.prepareReload()
+                    webView.reload()
                 }
                 // Observe the repository so toggles/updates also remove or replace existing CSS.
                 controller.applyCosmeticScript(webView, cosmeticScript)

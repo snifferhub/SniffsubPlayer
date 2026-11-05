@@ -55,6 +55,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
@@ -385,15 +386,12 @@ private fun CandidateSheet(
                 modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("媒体资源", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (state.snifferEnabled) "正在扫描当前网页 · 已发现 ${state.candidates.size} 个资源"
-                        else "扫描已结束 · 发现 ${state.candidates.size} 个资源",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text(
+                    "媒体资源（${state.candidates.size}）",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
                 IconButton(onClick = { close() }, modifier = Modifier.testTag("close_candidates_button")) {
                     Icon(Icons.Default.Close, contentDescription = "关闭资源列表")
                 }
@@ -401,22 +399,26 @@ private fun CandidateSheet(
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(
                     onClick = actions.onRequestSniff,
-                    enabled = !state.loading,
+                    enabled = !state.loading && !state.snifferEnabled &&
+                        state.currentPageUrl.ifBlank { state.address }.isNotBlank(),
                     modifier = Modifier.testTag("rescan_button"),
                 ) {
-                    Icon(Icons.Default.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
+                    if (state.snifferEnabled) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
+                    }
                     Spacer(Modifier.width(6.dp))
-                    Text("重新扫描")
+                    Text(if (state.snifferEnabled) "正在扫描" else "重新扫描")
                 }
+                TextButton(onClick = { close() }) { Text("返回网页") }
                 Spacer(Modifier.weight(1f))
-                TextButton(
+                IconButton(
                     onClick = actions.onClearCandidates,
                     enabled = state.candidates.isNotEmpty(),
                     modifier = Modifier.testTag("clear_candidates_button"),
                 ) {
-                    Icon(Icons.Default.ClearAll, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("清空")
+                    Icon(Icons.Default.ClearAll, contentDescription = "清空资源", modifier = Modifier.size(20.dp))
                 }
             }
             if (state.candidates.isEmpty()) {
@@ -426,12 +428,9 @@ private fun CandidateSheet(
                 ) {
                     Icon(Icons.Default.Waves, contentDescription = null, tint = Color(0xFF0088FF), modifier = Modifier.size(40.dp))
                     Spacer(Modifier.height(12.dp))
-                    Text("暂未发现媒体资源", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
                     Text(
-                        "返回网页播放视频，再点击蓝色按钮。每次只扫描当前网页 8 秒，换页后自动清空。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        if (state.snifferEnabled) "正在查找媒体资源" else "暂未发现媒体资源",
+                        style = MaterialTheme.typography.titleMedium,
                     )
                 }
             } else {
@@ -476,12 +475,6 @@ private fun CandidateRow(candidate: MediaCandidate, modifier: Modifier = Modifie
                 modifier = Modifier
                     .background(badgeColor.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
                     .padding(horizontal = 7.dp, vertical = 2.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = candidate.source,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Spacer(Modifier.height(4.dp))

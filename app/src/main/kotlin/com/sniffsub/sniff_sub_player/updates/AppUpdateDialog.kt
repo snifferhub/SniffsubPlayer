@@ -76,7 +76,6 @@ fun AppUpdateDialog(
                     }
                 }
                 state.message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                if (state.stage == UpdateStage.READY) Text("点击安装后由系统确认，设置与收藏夹会保留。")
                 installMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },

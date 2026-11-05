@@ -39,6 +39,9 @@ struct PlayerView: View {
     @State private var searchQuery = ""
     @State private var onlineSubtitles: [OnlineSubtitle] = []
     @State private var isSearchingSubtitles = false
+    @State private var hasSearchedSubtitles = false
+    @State private var downloadingSubtitleURL: String?
+    @State private var subtitleSearchMessage = ""
     @State private var showControls = true
     @State private var hideControlsTask: Task<Void, Never>?
     @State private var seekFeedbackText = ""
@@ -109,20 +112,8 @@ struct PlayerView: View {
         .sheet(isPresented: $showingPasteSheet) {
             pasteSubtitleSheet
         }
-        .sheet(isPresented: $showingSubtitleSearch) {
+        .sheet(isPresented: $showingSubtitleSearch, onDismiss: performPendingSubtitleAction) {
             subtitleSearchSheet
-        }
-        .sheet(item: $subtitlecatPage) { page in
-            NavigationStack {
-                SubtitlecatWebView(url: page.url)
-                    .navigationTitle("Subtitlecat")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("关闭") { subtitlecatPage = nil }
-                        }
-                    }
-            }
         }
         .onAppear {
             searchQuery = VideoIDExtractor.extract(from: [candidate.pageUrl, candidate.url])
@@ -299,7 +290,7 @@ struct PlayerView: View {
                 HStack(spacing: 10) {
                     subtitleActionButton("在线搜索", systemImage: "magnifyingglass", action: .search)
                     subtitleActionButton("字幕文件", systemImage: "doc.badge.plus", action: .importFile)
-                    subtitleActionButton("查看字幕", systemImage: "doc.on.clipboard", action: .paste)
+                    subtitleActionButton("粘贴字幕", systemImage: "doc.on.clipboard", action: .paste)
                 }
 
                 Divider()
@@ -401,29 +392,42 @@ struct PlayerView: View {
                         .autocorrectionDisabled()
                         .textFieldStyle(.roundedBorder)
 
-                    Button("字幕搜索") {
+                    Button {
                         Task { await searchOnlineSubtitles() }
+                    } label: {
+                        if isSearchingSubtitles {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "magnifyingglass")
+                        }
                     }
-                    .disabled(isSearchingSubtitles)
+                    .accessibilityLabel("字幕搜索")
+                    .frame(minWidth: 44, minHeight: 44)
+                    .disabled(isSearchingSubtitles || downloadingSubtitleURL != nil)
                 }
 
-                if !status.isEmpty {
-                    Text(status)
+                if !subtitleSearchMessage.isEmpty {
+                    Text(subtitleSearchMessage)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 HStack {
-                    Button("打开 Subtitlecat") {
+                    Button("Subtitlecat") {
                         openSubtitlecat()
                     }
-
-                    if isSearchingSubtitles {
-                        ProgressView()
+                    .frame(maxWidth: .infinity)
+                    Button("导入文件") {
+                        pendingSubtitleAction = .importFile
+                        showingSubtitleSearch = false
                     }
-
-                    Spacer()
+                    .frame(maxWidth: .infinity)
+                    Button("粘贴字幕") {
+                        pendingSubtitleAction = .paste
+                        showingSubtitleSearch = false
+                    }
+                    .frame(maxWidth: .infinity)
                 }
 
                 if onlineSubtitles.isEmpty {
@@ -431,12 +435,10 @@ struct PlayerView: View {
                         Image(systemName: "captions.bubble")
                             .font(.largeTitle)
                             .foregroundStyle(.secondary)
-                        Text("暂无字幕结果")
-                            .font(.headline)
-                        Text("可先在线搜索，或打开 Subtitlecat 自行下载后导入字幕文件。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
+                        if !isSearchingSubtitles && subtitleSearchMessage.isEmpty {
+                            Text(hasSearchedSubtitles ? "未找到字幕" : "暂无字幕")
+                                .font(.headline)
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -444,15 +446,16 @@ struct PlayerView: View {
                         Button {
                             Task { await loadRemoteSubtitle(item) }
                         } label: {
-                            VStack(alignment: .leading, spacing: 4) {
+                            HStack {
                                 Text(item.displayName)
                                     .font(.body)
-                                Text(item.url)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
+                                Spacer()
+                                if downloadingSubtitleURL == item.url {
+                                    ProgressView()
+                                }
                             }
                         }
+                        .disabled(downloadingSubtitleURL != nil || isSearchingSubtitles)
                     }
                 }
             }
@@ -463,6 +466,18 @@ struct PlayerView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { showingSubtitleSearch = false }
                 }
+            }
+        }
+        .sheet(item: $subtitlecatPage) { page in
+            NavigationStack {
+                SubtitlecatWebView(url: page.url)
+                    .navigationTitle("Subtitlecat")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("关闭") { subtitlecatPage = nil }
+                        }
+                    }
             }
         }
     }
@@ -755,14 +770,16 @@ struct PlayerView: View {
     }
 
     private func searchOnlineSubtitles() async {
+        guard !isSearchingSubtitles, downloadingSubtitleURL == nil else { return }
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
-            status = "请输入番号或关键词后再搜索"
+            subtitleSearchMessage = "请输入番号或关键词"
             return
         }
 
         isSearchingSubtitles = true
-        status = "正在搜索字幕: \(query)"
+        hasSearchedSubtitles = true
+        subtitleSearchMessage = ""
         defer { isSearchingSubtitles = false }
 
         do {
@@ -780,17 +797,20 @@ struct PlayerView: View {
             let decoded = try JSONDecoder().decode(RemoteSubtitleSearchResponse.self, from: data)
             onlineSubtitles = (decoded.data ?? [])
                 .filter { $0.url.lowercased().contains(".srt") || $0.url.lowercased().contains(".vtt") }
-            status = onlineSubtitles.isEmpty ? "未找到在线字幕" : "找到 \(onlineSubtitles.count) 个字幕"
         } catch {
-            status = "在线字幕搜索失败: \(error.localizedDescription)"
+            subtitleSearchMessage = "字幕搜索失败: \(error.localizedDescription)"
         }
     }
 
     private func loadRemoteSubtitle(_ item: OnlineSubtitle) async {
+        guard downloadingSubtitleURL == nil, !isSearchingSubtitles else { return }
         guard let url = URL(string: item.url) else {
-            status = "字幕链接无效"
+            subtitleSearchMessage = "字幕链接无效"
             return
         }
+        downloadingSubtitleURL = item.url
+        subtitleSearchMessage = ""
+        defer { downloadingSubtitleURL = nil }
 
         do {
             var request = URLRequest(url: url)
@@ -807,7 +827,7 @@ struct PlayerView: View {
             applySubtitle(text, label: item.name)
             showingSubtitleSearch = false
         } catch {
-            status = "字幕下载失败: \(error.localizedDescription)"
+            subtitleSearchMessage = "字幕下载失败: \(error.localizedDescription)"
         }
     }
 

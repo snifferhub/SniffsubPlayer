@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -32,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sniffsub.sniff_sub_player.adblock.AdBlockState
@@ -53,7 +56,7 @@ data class AdBlockSettingsActions(
 internal fun subscriptionValidationMessage(rawUrl: String): String? {
     val uri = parseWebUrl(rawUrl.trim())
     return if (uri == null || uri.scheme != "https") {
-        "请输入有效的 HTTPS raw 规则链接"
+        "请输入 HTTPS 规则文件链接"
     } else {
         null
     }
@@ -70,6 +73,8 @@ fun AdBlockSettingsScreen(
     var subscriptionUrl by remember { mutableStateOf("") }
     var validationMessage by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
+    val canUpdate = !state.isUpdating &&
+        (state.configurationNeedsUpdate || state.subscriptions.any { it.enabled })
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -82,7 +87,7 @@ fun AdBlockSettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 36.dp),
         ) {
-            SettingsSection(footer = "规则只应用于 App 内的网页。开关变化后返回网页刷新生效。") {
+            SettingsSection {
                 SwitchRow(
                     label = "广告屏蔽",
                     checked = state.isEnabled,
@@ -98,12 +103,7 @@ fun AdBlockSettingsScreen(
                 )
             }
 
-            SettingsSection(
-                title = "规则订阅",
-                footer = if (state.subscriptions.any { it.builtIn })
-                    "已内置 GitHub 上的 AdGuard 与 EasyList China 规则。内置规则可以关闭，手动添加的订阅可删除。"
-                else "请添加 AdGuard/EasyList 文本规则的 HTTPS raw 链接，而不是网页预览链接。",
-            ) {
+            SettingsSection(title = "规则订阅") {
                 SettingsRow(
                     label = "添加订阅",
                     leading = { Icon(Icons.Default.Add, contentDescription = null) },
@@ -121,24 +121,22 @@ fun AdBlockSettingsScreen(
                 }
             }
 
-            SettingsSection(
-                title = "规则状态",
-                footer = "下载或转换失败时保留已生效的规则。",
-            ) {
+            SettingsSection(title = "规则状态") {
                 SettingsRow(
-                    label = "立即更新规则",
+                    label = when {
+                        state.isUpdating -> "正在更新"
+                        state.configurationNeedsUpdate -> "应用更改"
+                        else -> "更新规则"
+                    },
                     leading = { Icon(Icons.Default.Refresh, contentDescription = null) },
                     trailing = if (state.isUpdating) {
-                        { CircularProgressIndicator() }
+                        { CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp) }
                     } else {
                         null
                     },
-                    labelColor = MaterialTheme.colorScheme.primary,
-                    onClick = if (state.isUpdating || state.subscriptions.none { it.enabled }) {
-                        null
-                    } else {
-                        actions.onRefresh
-                    },
+                    labelColor = if (canUpdate) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    onClick = if (canUpdate) actions.onRefresh else null,
                     modifier = Modifier.testTag("refresh_rules_button"),
                 )
                 HorizontalDivider()
@@ -148,20 +146,7 @@ fun AdBlockSettingsScreen(
                     SettingsRow(label = "上次生效", value = formatLocalDateTime(updatedAt))
                 }
                 HorizontalDivider()
-                SettingsRow(label = "源规则", value = state.sourceRulesCount.toString())
-                HorizontalDivider()
                 SettingsRow(label = "有效规则", value = state.convertedRulesCount.toString())
-                HorizontalDivider()
-                SettingsRow(label = "不支持或重复", value = state.discardedRulesCount.toString())
-                if (state.configurationNeedsUpdate) {
-                    HorizontalDivider()
-                    Text(
-                        "订阅配置已变化，请更新规则后生效",
-                        color = MaterialTheme.colorScheme.tertiary,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(12.dp),
-                    )
-                }
                 state.errorMessage?.let { message ->
                     HorizontalDivider()
                     Text(
@@ -189,7 +174,8 @@ fun AdBlockSettingsScreen(
                             subscriptionUrl = it
                             validationMessage = null
                         },
-                        placeholder = { Text("https://…/filter.txt") },
+                        label = { Text("HTTPS 规则文件链接") },
+                        isError = validationMessage != null,
                         modifier = Modifier.testTag("subscription_url_field"),
                         minLines = 1,
                         maxLines = 3,
@@ -245,30 +231,17 @@ private fun SubscriptionRow(
             .padding(start = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(subscription.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (subscription.builtIn) {
-                    Text(
-                        "内置",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 7.dp),
-                    )
-                }
-            }
-            Text(
-                subscription.url,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Text(
+            if (subscription.builtIn) subscription.name else subscription.url,
+            modifier = Modifier.weight(1f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
         Switch(
             checked = subscription.enabled,
             onCheckedChange = { actions.onSetSubscriptionEnabled(subscription.id, it) },
-            modifier = Modifier.testTag("subscription_switch_${subscription.id}"),
+            modifier = Modifier.testTag("subscription_switch_${subscription.id}")
+                .semantics { contentDescription = subscription.name },
         )
         if (!subscription.builtIn) {
             IconButton(
@@ -295,15 +268,20 @@ private fun SwitchRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onCheckedChange, modifier = modifier)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = modifier.semantics { contentDescription = label },
+        )
     }
 }
 
 private fun adBlockStatusText(state: AdBlockState): String = when {
-    state.isUpdating -> "正在下载并转换规则…"
-    state.errorMessage != null -> state.errorMessage.orEmpty()
+    state.isUpdating -> "更新中"
+    state.errorMessage != null -> "更新失败"
+    state.configurationNeedsUpdate -> "待应用"
     state.convertedRulesCount == 0 -> "尚未生成规则"
-    state.isEnabled -> "已应用 ${state.convertedRulesCount} 条规则"
-    else -> "规则已就绪（当前关闭）"
+    state.isEnabled -> "已启用"
+    else -> "已关闭"
 }
 

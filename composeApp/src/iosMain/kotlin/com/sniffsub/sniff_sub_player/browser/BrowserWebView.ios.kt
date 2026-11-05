@@ -101,7 +101,9 @@ internal fun IosBrowserWebView(
             update = { view ->
                 view.hidden = !isActive
                 view.userInteractionEnabled = isActive
-                view.customUserAgent = state.userAgent.ifBlank { null }
+                val desiredUserAgent = state.userAgent.ifBlank { null }
+                val userAgentChanged = view.customUserAgent != desiredUserAgent
+                view.customUserAgent = desiredUserAgent
                 if (controller.rulesRevision != filterRevision) {
                     configure(view) {}
                     controller.rulesRevision = filterRevision
@@ -110,6 +112,9 @@ internal fun IosBrowserWebView(
                 if (requested.isNotBlank() && requested != view.URL?.absoluteString &&
                     (view.URL == null || requested != state.currentPageUrl)) {
                     controller.loadUrl(requested)
+                } else if (userAgentChanged && controller.ready && view.URL != null) {
+                    session.prepareReload()
+                    controller.reload()
                 }
                 if (!isActive || !state.snifferEnabled) {
                     if (controller.sniffRevision != null) {
