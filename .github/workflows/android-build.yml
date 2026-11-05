@@ -20,12 +20,15 @@ defaults:
 
 env:
   PUBLIC_RELEASE_REPOSITORY: snifferhub/SniffSubPlayer-Releases
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=true -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process
 
 jobs:
   prepare:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.release.outputs.version }}
       build: ${{ steps.release.outputs.build }}
@@ -45,10 +48,18 @@ jobs:
           gh api --paginate --slurp \
             "repos/$PUBLIC_RELEASE_REPOSITORY/releases?per_page=100" \
             > "$RUNNER_TEMP/releases.json"
-          python3 .github/scripts/release_notes.py prepare \
+          python3 .github/scripts/release_notes.py \
             --releases "$RUNNER_TEMP/releases.json" \
             --head "$GITHUB_SHA" \
             --run-number "$GITHUB_RUN_NUMBER"
+
+      - name: Reserve release build number
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" > /dev/null
 
       - name: Generate release notes from commits
         uses: orhun/git-cliff-action@v4.8.0
@@ -58,9 +69,6 @@ jobs:
           args: ${{ steps.release.outputs.range }}
         env:
           OUTPUT: ${{ runner.temp }}/release-notes.md
-
-      - name: Finalize release notes
-        run: python3 .github/scripts/release_notes.py finalize --notes "$RUNNER_TEMP/release-notes.md"
 
       - name: Share release notes with publisher
         uses: actions/upload-artifact@v7
@@ -80,13 +88,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Java
-        id: java
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: gradle
+      - name: Set up Gradle
+        id: gradle
+        uses: ./.github/actions/gradle-setup
 
       - name: Configure release signing
         env:
@@ -94,10 +98,8 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          RELEASE_APP_CLIENT_ID: ${{ vars.ANDROID_UPDATES_APP_CLIENT_ID }}
-          RELEASE_APP_PRIVATE_KEY: ${{ secrets.ANDROID_UPDATES_APP_PRIVATE_KEY }}
         run: |
-          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD RELEASE_APP_CLIENT_ID RELEASE_APP_PRIVATE_KEY; do
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Missing required signing or publishing configuration: $name"
               exit 1
@@ -115,12 +117,10 @@ jobs:
           RELEASE_BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
         run: |
           ./gradlew :app:assembleRelease \
-            -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
-            -Pkotlin.compiler.execution.strategy=in-process \
-            --no-daemon
+            -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER"
 
       - name: Stop build daemons and remove signing material
-        if: always() && steps.java.outcome == 'success'
+        if: always() && steps.gradle.outcome == 'success'
         run: |
           rm -f "$RUNNER_TEMP/release-keystore.jks"
           ./gradlew --stop
@@ -149,43 +149,68 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     env:
-      # Xcode's Gradle phase inherits these options; no persistent Java daemons.
-      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - name: Check out source
         uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - name: Set up Java
-        id: java
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: gradle
+      - name: Set up Gradle
+        id: gradle
+        uses: ./.github/actions/gradle-setup
 
       - name: Cache Kotlin Native toolchain
         uses: actions/cache@v5
         with:
           path: ~/.konan
-          key: ${{ runner.os }}-${{ runner.arch }}-konan-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-konan-xcode26.6-${{ hashFiles('gradle/libs.versions.toml') }}
 
-      - name: Build and package unsigned iOS IPA
+      - name: Build iOS device release
         env:
           APP_VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
-        run: bash .github/scripts/build_ios_ipa.sh "$APP_VERSION" "$RELEASE_BUILD_NUMBER" "$RUNNER_TEMP/ios-release"
+        run: |
+          xcodebuild build \
+            -project iosApp/SniffSubPlayer.xcodeproj \
+            -scheme SniffSubPlayer \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/ios-build" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            ARCHS=arm64 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+            MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER"
+
+      - name: Package unsigned IPA
+        env:
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
+        run: |
+          APP="$RUNNER_TEMP/ios-build/Build/Products/Release-iphoneos/SniffSubPlayer.app"
+          test -s "$APP/compose-resources/composeResources/com.sniffsub.composeapp.resources/files/sniffer.js"
+          test ! -e "$APP/embedded.mobileprovision"
+          test "$(xcrun lipo -archs "$APP/SniffSubPlayer")" = arm64
+          xcrun vtool -show-build "$APP/SniffSubPlayer" | grep -Eq 'platform[[:space:]]+IOS$'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "$APP_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = "$RELEASE_BUILD_NUMBER"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          ditto "$APP" "$RUNNER_TEMP/Payload/SniffSubPlayer.app"
+          if codesign --display "$RUNNER_TEMP/Payload/SniffSubPlayer.app" >/dev/null 2>&1; then
+            codesign --remove-signature "$RUNNER_TEMP/Payload/SniffSubPlayer.app"
+          fi
+          ditto -c -k --norsrc --keepParent "$RUNNER_TEMP/Payload" "$RUNNER_TEMP/SniffSubPlayer-iOS-unsigned.ipa"
+          unzip -tq "$RUNNER_TEMP/SniffSubPlayer-iOS-unsigned.ipa"
 
       - name: Stop build daemons
-        if: always() && steps.java.outcome == 'success'
+        if: always() && steps.gradle.outcome == 'success'
         run: ./gradlew --stop
 
       - name: Upload unsigned IPA artifact
         uses: actions/upload-artifact@v7
         with:
           name: SniffSubPlayer-iOS-${{ needs.prepare.outputs.build }}
-          path: ${{ runner.temp }}/ios-release/SniffSubPlayer-iOS-unsigned.ipa
+          path: ${{ runner.temp }}/SniffSubPlayer-iOS-unsigned.ipa
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
@@ -194,32 +219,19 @@ jobs:
     needs: [prepare, android, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: write
     steps:
-      - name: Download signed APK
+      - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
-          name: SniffSubPlayer-Android-${{ needs.prepare.outputs.build }}
+          pattern: '*-${{ needs.prepare.outputs.build }}'
+          merge-multiple: true
           path: dist
-
-      - name: Download unsigned IPA
-        uses: actions/download-artifact@v8
-        with:
-          name: SniffSubPlayer-iOS-${{ needs.prepare.outputs.build }}
-          path: dist
-
-      - name: Download release notes
-        uses: actions/download-artifact@v8
-        with:
-          name: release-notes-${{ needs.prepare.outputs.build }}
-          path: notes
 
       - name: Verify both packages and create shared checksums
         run: |
           test -s dist/SniffSubPlayer-Android.apk
           test -s dist/SniffSubPlayer-iOS-unsigned.ipa
-          test -s notes/release-notes.md
+          test -s dist/release-notes.md
           cd dist
           sha256sum SniffSubPlayer-Android.apk SniffSubPlayer-iOS-unsigned.ipa > SHA256SUMS.txt
           sha256sum --check SHA256SUMS.txt
@@ -233,19 +245,6 @@ jobs:
           owner: snifferhub
           repositories: SniffSubPlayer-Releases
           permission-contents: write
-
-      - name: Record source tag for subsequent release notes
-        # Installed Android clients still require the android-v<version>-build.<build> format.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/source-tag.json" 2>/dev/null; then
-            test "$(jq -r .object.sha "$RUNNER_TEMP/source-tag.json")" = "$GITHUB_SHA"
-          else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" > /dev/null
-          fi
 
       - name: Publish Android and iOS together to release repository
         env:
@@ -262,13 +261,13 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --repo "$PUBLIC_RELEASE_REPOSITORY" --target main --draft \
               --title "SniffSubPlayer $APP_VERSION (build $RELEASE_BUILD_NUMBER)" \
-              --notes-file notes/release-notes.md
+              --notes-file dist/release-notes.md
           fi
           gh release upload "$RELEASE_TAG" \
             dist/SniffSubPlayer-Android.apk dist/SniffSubPlayer-iOS-unsigned.ipa dist/SHA256SUMS.txt \
             --repo "$PUBLIC_RELEASE_REPOSITORY" --clobber
           gh release edit "$RELEASE_TAG" \
             --repo "$PUBLIC_RELEASE_REPOSITORY" \
-            --notes-file notes/release-notes.md --draft=false --latest
+            --notes-file dist/release-notes.md --draft=false --latest
           printf 'Published Android APK and unsigned iOS IPA, build %s, to %s\n' \
             "$RELEASE_BUILD_NUMBER" "$PUBLIC_RELEASE_REPOSITORY" >> "$GITHUB_STEP_SUMMARY"

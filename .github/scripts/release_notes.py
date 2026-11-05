@@ -9,7 +9,6 @@ import subprocess
 
 
 TAG_PATTERN = re.compile(r"android-v(\d+\.\d+\.\d+)-build\.(\d+)")
-MAINTENANCE_NOTES = "本次更新\n\n- 本次发布包含构建和维护调整。\n"
 
 
 def git(*args: str) -> str:
@@ -77,55 +76,19 @@ def prepare_release(releases: list, head: str, run_number: int) -> dict[str, str
     }
 
 
-def finalize_notes(path: Path, summary_path: Path | None = None) -> None:
-    notes = re.sub(r"\n{3,}", "\n\n", path.read_text(encoding="utf-8").strip())
-    if not any(line.startswith("- ") for line in notes.splitlines()):
-        notes = MAINTENANCE_NOTES.strip()
-    notes += (
-        "\n\n安装包\n\n"
-        "- Android：下载 `SniffSubPlayer-Android.apk` 安装。\n"
-        "- iOS：下载 `SniffSubPlayer-iOS-unsigned.ipa`，使用 AltStore Classic 等侧载工具签名安装；"
-        "IPA 未包含开发者证书，不能直接安装。\n"
-        "- `SHA256SUMS.txt` 包含两个安装包的 SHA-256 校验值。"
-    )
-    path.write_text(notes + "\n", encoding="utf-8")
-    if summary_path:
-        with summary_path.open("a", encoding="utf-8") as summary:
-            summary.write("## 自动生成的更新说明\n\n" + notes + "\n")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
-    resolve = commands.add_parser("range")
-    resolve.add_argument("--releases", type=Path, required=True)
-    resolve.add_argument("--head", required=True)
-    resolve.add_argument("--current-tag", required=True)
-    prepare = commands.add_parser("prepare")
-    prepare.add_argument("--releases", type=Path, required=True)
-    prepare.add_argument("--head", required=True)
-    prepare.add_argument("--run-number", type=int, required=True)
-    finalize = commands.add_parser("finalize")
-    finalize.add_argument("--notes", type=Path, required=True)
+    parser.add_argument("--releases", type=Path, required=True)
+    parser.add_argument("--head", required=True)
+    parser.add_argument("--run-number", type=int, required=True)
     args = parser.parse_args()
-
-    if args.command in ("range", "prepare"):
-        # gh api --paginate --slurp returns one release array per page.
-        pages = json.loads(args.releases.read_text(encoding="utf-8"))
-        if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
-            raise ValueError("Expected paginated GitHub Releases JSON arrays")
-        releases = [release for page in pages for release in page]
-        outputs = (
-            prepare_release(releases, args.head, args.run_number)
-            if args.command == "prepare"
-            else {"range": release_range(releases, args.head, args.current_tag)}
-        )
-        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-            for name, value in outputs.items():
-                output.write(f"{name}={value}\n")
-    else:
-        summary = os.environ.get("GITHUB_STEP_SUMMARY")
-        finalize_notes(args.notes, Path(summary) if summary else None)
+    # gh api --paginate --slurp returns one release array per page.
+    pages = json.loads(args.releases.read_text(encoding="utf-8"))
+    releases = [release for page in pages for release in page]
+    outputs = prepare_release(releases, args.head, args.run_number)
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+        for name, value in outputs.items():
+            output.write(f"{name}={value}\n")
 
 
 if __name__ == "__main__":

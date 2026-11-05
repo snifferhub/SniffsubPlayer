@@ -1,0 +1,12 @@
+name: Gradle setup
+description: Set up the project's Java and Gradle environment
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v6
+      with:
+        distribution: temurin
+        java-version: "21"
+    - uses: gradle/actions/setup-gradle@v6
+      with:
+        cache-provider: basic

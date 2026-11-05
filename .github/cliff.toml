@@ -2,13 +2,24 @@
 [changelog]
 header = "本次更新\n\n"
 body = """
-{% for group, commits in commits | group_by(attribute="group") %}
+{% for group, commits in commits | group_by(attribute="group") -%}
 {{ group | split(pat="_") | last }}
 
-{% for commit in commits %}
+{% for commit in commits -%}
 - {% if commit.breaking %}【兼容性变更】{% endif %}{{ commit.message | split(pat="\n") | first | trim }}
 {% endfor %}
-{% endfor %}
+{% endfor -%}
+"""
+footer = """
+{% if releases | length == 0 -%}
+- 本次发布包含构建和维护调整。
+
+{% endif -%}
+安装包
+
+- Android：下载 `SniffSubPlayer-Android.apk` 安装。
+- iOS：下载 `SniffSubPlayer-iOS-unsigned.ipa`，使用 AltStore Classic 等侧载工具签名安装；IPA 未包含开发者证书，不能直接安装。
+- `SHA256SUMS.txt` 包含两个安装包的 SHA-256 校验值。
 """
 trim = true
 postprocessors = [{ pattern = '\n{3,}', replace = "\n\n" }]
@@ -23,7 +34,6 @@ sort_commits = "oldest"
 # The workflow supplies an explicit range; unpublished tags must not split it.
 ignore_tags = ".*"
 include_paths = [
-    ".github/scripts/build_ios_ipa.sh",
     "app/src/main/**",
     "app/build.gradle.kts",
     "shared/src/commonMain/**",
