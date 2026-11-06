@@ -228,7 +228,7 @@ private fun SubscriptionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, top = 10.dp, bottom = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

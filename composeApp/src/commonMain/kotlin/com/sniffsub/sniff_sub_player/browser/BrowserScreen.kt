@@ -112,6 +112,7 @@ fun BrowserScreen(
     accentArgb: Long = 0xFFE8A7BFL,
     isActive: Boolean = true,
     showSniffMenuItem: Boolean = true,
+    snackbarHostModifier: Modifier = Modifier,
     tabsContent: @Composable () -> Unit = {},
     webViewContent: @Composable () -> Unit = {},
 ) {
@@ -318,7 +319,7 @@ fun BrowserScreen(
                 }
             }
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { SnackbarHost(snackbarHostState, modifier = snackbarHostModifier) },
     ) { innerPadding ->
         Column(
             modifier = Modifier

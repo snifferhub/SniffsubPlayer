@@ -164,6 +164,9 @@ private fun SniffSubPlayerApp(
                 state = browserState,
                 isActive = currentRoute == BROWSER_ROUTE,
                 showSniffMenuItem = false,
+                snackbarHostModifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(bottom = if (keyboardVisible) 0.dp else 96.dp),
                 accentArgb = preferences.accentArgb,
                 actions = BrowserActions(
                     onToggleBookmark = browserViewModel::toggleBookmark,
