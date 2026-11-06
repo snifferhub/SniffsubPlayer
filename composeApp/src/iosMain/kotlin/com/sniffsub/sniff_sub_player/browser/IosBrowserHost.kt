@@ -15,6 +15,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import platform.UIKit.UIColor
 import platform.UIKit.UIViewController
@@ -37,7 +39,7 @@ class IosBrowserHost {
     private val controllers = mutableMapOf<String, IosWebViewController>()
     private val observations = mutableMapOf<String, Job>()
     private val activity = MutableStateFlow(false)
-    private val active get() = activity.value
+    private val viewRevision = MutableStateFlow(0L)
     private var filterRevision = 0L
     private var script: String? = null
     private var started = false
@@ -61,12 +63,15 @@ class IosBrowserHost {
                 this@IosBrowserHost.callbacks?.stateChanged(state, tabs, settings)
             }
         }
-        scope.launch { workspace.tabs.collect { syncWebViews() } }
+        scope.launch {
+            workspace.tabs.map { state -> state.tabs.map { it.id } }.distinctUntilChanged()
+                .collect { syncWebViews() }
+        }
         preferences.migrationFailure()?.let { callbacks.reportError(it) }
         scope.launch {
             try {
                 script = Res.readBytes("files/sniffer.js").decodeToString()
-                syncWebViews()
+                viewRevision.value++
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -92,26 +97,34 @@ class IosBrowserHost {
     }
 
     fun setActive(value: Boolean) {
-        if (active == value) return
+        if (activity.value == value) return
         activity.value = value
         if (!value) workspace.stopAllSniffing()
-        syncWebViews()
     }
 
     fun setFilterRevision(value: Long) {
+        if (filterRevision == value) return
         filterRevision = value
-        syncWebViews()
+        viewRevision.value++
     }
 
     fun loadAddress(address: String) {
         workspace.activeSession.submitAddress(address)?.let { url ->
-            controllers[workspace.tabs.value.selectedId]?.loadUrl(url)
+            controllers[workspace.tabs.value.selectedId]?.let { controller ->
+                controller.prepareForUserNavigation()
+                controller.loadUrl(url)
+            }
         }
     }
 
-    fun goBack() { controllers[workspace.tabs.value.selectedId]?.goBack() }
-    fun goForward() { controllers[workspace.tabs.value.selectedId]?.goForward() }
+    fun goBack() {
+        controllers[workspace.tabs.value.selectedId]?.let { it.prepareForUserNavigation(); it.goBack() }
+    }
+    fun goForward() {
+        controllers[workspace.tabs.value.selectedId]?.let { it.prepareForUserNavigation(); it.goForward() }
+    }
     fun reload() {
+        controllers[workspace.tabs.value.selectedId]?.prepareForUserNavigation()
         workspace.activeSession.prepareReload()
         controllers[workspace.tabs.value.selectedId]?.reload()
     }
@@ -167,22 +180,21 @@ class IosBrowserHost {
                     if (delegate == null) ready() else delegate.configureWebView(view, ready)
                 }
             }
-            // Observe every session, including hidden tabs, so UA changes and renderer recovery
-            // do not depend on the selected tab publishing another state update.
             observations.getOrPut(tab.id) {
                 scope.launch {
-                    session.uiState.collect { state ->
-                        controller.update(
-                            parent.view, state, active && tab.id == workspace.tabs.value.selectedId,
-                            filterRevision, script,
-                        )
-                    }
+                    // This is the only state-application path for this view. Tab metadata only
+                    // manages controller membership; it must not apply the same state twice.
+                    combine(
+                        session.uiState, activity, viewRevision,
+                        workspace.tabs.map { it.selectedId }.distinctUntilChanged(),
+                    ) { state, visible, _, selectedId -> state to (visible && tab.id == selectedId) }
+                        .collect { (state, visible) ->
+                            controller.update(
+                                parent.view, state, visible, filterRevision, script,
+                            )
+                        }
                 }
             }
-            controller.update(
-                parent.view, session.uiState.value, active && tab.id == tabs.selectedId,
-                filterRevision, script,
-            )
         }
     }
 }

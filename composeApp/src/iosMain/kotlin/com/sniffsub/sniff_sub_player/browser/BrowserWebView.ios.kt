@@ -1,4 +1,4 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlin.experimental.ExperimentalNativeApi::class)
 
 package com.sniffsub.sniff_sub_player.browser
 
@@ -26,6 +26,18 @@ internal class IosWebViewController(
     private var ready = false
     private var pendingUrl: String? = null
     private var delegate: BrowserDelegate? = null
+    private var appliedUserAgent: String? = null
+    private var rendererTerminated = false
+    private var automaticRecoveryAttempts = 0
+    private var automaticRecoveryBlocked = false
+    private var viewCreations = 0L
+    private var navigationStarts = 0L
+    private var userAgentReloads = 0L
+
+    fun prepareForUserNavigation() {
+        automaticRecoveryAttempts = 0
+        automaticRecoveryBlocked = false
+    }
 
     fun loadUrl(url: String) {
         if (!ready) { pendingUrl = url; return }
@@ -33,13 +45,14 @@ internal class IosWebViewController(
     }
     fun goBack() { view?.takeIf { it.canGoBack }?.goBack() }
     fun goForward() { view?.takeIf { it.canGoForward }?.goForward() }
-    fun reload() { view?.reload() }
+    fun reload() { if (ready) view?.reload() }
     fun stopLoading() {
         view?.stopLoading()
         session.setLoading(false)
     }
 
     fun sampleNavigation() {
+        if (!ready || rendererTerminated) return
         view?.let { webView ->
             session.updatePage(webView.URL?.absoluteString, webView.title)
             session.setLoading(webView.loading, webView.estimatedProgress)
@@ -48,9 +61,21 @@ internal class IosWebViewController(
     }
 
     fun update(parent: UIView, state: BrowserUiState, active: Boolean, filterRevision: Long, script: String?) {
+        if (automaticRecoveryBlocked) {
+            // The failed view must still hide when another tab becomes active.
+            view?.hidden = !active
+            view?.userInteractionEnabled = false
+            delegate?.active = false
+            return
+        }
         if (view == null || generation != state.webViewGeneration) {
             release()
             generation = state.webViewGeneration
+            val initialUserAgent = state.userAgent.ifBlank { null }
+            // Record the setting we apply. WebKit may read the default UA back as "" rather
+            // than nil, so comparing its getter with null can trigger an endless reload loop.
+            appliedUserAgent = initialUserAgent
+            rendererTerminated = false
             val navigation = BrowserDelegate(session, this).also { delegate = it }
             val configuration = WKWebViewConfiguration().apply {
                 websiteDataStore = WKWebsiteDataStore.defaultDataStore()
@@ -61,16 +86,18 @@ internal class IosWebViewController(
             val created = WKWebView(frame = CGRectZero.readValue(), configuration = configuration).apply {
                 navigationDelegate = navigation
                 allowsBackForwardNavigationGestures = true
-                customUserAgent = state.userAgent.ifBlank { null }
+                customUserAgent = initialUserAgent
                 autoresizingMask = UIViewAutoresizingFlexibleWidth or UIViewAutoresizingFlexibleHeight
                 setFrame(parent.bounds)
             }
             view = created
+            viewCreations++
+            trace("created")
             parent.addSubview(created)
             rulesRevision = filterRevision
             if (state.address.isNotBlank()) pendingUrl = state.address
             configure(created) {
-                if (view === created) {
+                if (view === created && !rendererTerminated) {
                     ready = true
                     pendingUrl?.let { pendingUrl = null; loadUrl(it) }
                 }
@@ -81,15 +108,22 @@ internal class IosWebViewController(
         webView.hidden = !active
         webView.userInteractionEnabled = active
         val desiredUserAgent = state.userAgent.ifBlank { null }
-        val userAgentChanged = webView.customUserAgent != desiredUserAgent
-        webView.customUserAgent = desiredUserAgent
+        val userAgentChanged = appliedUserAgent != desiredUserAgent
+        if (userAgentChanged) {
+            // Commit before causing navigation callbacks or publishing any new session state.
+            appliedUserAgent = desiredUserAgent
+            webView.customUserAgent = desiredUserAgent
+        }
         if (rulesRevision != filterRevision) {
             rulesRevision = filterRevision
             configure(webView) {}
         }
         if (userAgentChanged && ready && webView.URL != null) {
+            userAgentReloads++
+            trace("UA changed")
             session.prepareReload()
             reload()
+            return // The next state invalidates any sniff request from before this reload.
         }
         if (!active || !state.snifferEnabled) {
             if (sniffRevision != null) {
@@ -108,10 +142,11 @@ internal class IosWebViewController(
     fun release() {
         delegate?.released = true
         view?.let {
-            it.stopLoading()
-            it.evaluateJavaScript(STOP_SCANNER, null)
             it.navigationDelegate = null
             it.configuration.userContentController.removeScriptMessageHandlerForName(BRIDGE)
+            it.stopLoading()
+            // Evaluating JS in a terminated view can start another content process during cleanup.
+            if (!rendererTerminated && sniffRevision != null) it.evaluateJavaScript(STOP_SCANNER, null)
             it.removeFromSuperview()
         }
         view = null
@@ -120,6 +155,39 @@ internal class IosWebViewController(
         pendingUrl = null
         sniffRevision = null
         rulesRevision = null
+    }
+
+    fun handleRendererTermination(webView: WKWebView) {
+        if (view !== webView || rendererTerminated) return
+        rendererTerminated = true
+        ready = false
+        pendingUrl = null
+        sniffRevision = null
+        // One automatic recovery per explicit user navigation. A successful page load does
+        // not reset this budget: a page that repeatedly loads then crashes must also stop.
+        automaticRecoveryBlocked = automaticRecoveryAttempts >= MAX_AUTOMATIC_RECOVERIES
+        if (!automaticRecoveryBlocked) automaticRecoveryAttempts++
+        trace("renderer terminated")
+        session.handleRendererGone()
+        if (automaticRecoveryBlocked) {
+            session.setTransientMessage("网页进程连续退出，已停止自动重载，请手动刷新")
+        }
+    }
+
+    fun recordNavigationStart() {
+        navigationStarts++
+        if (navigationStarts <= 20 || navigationStarts % 100L == 0L) trace("navigation started")
+    }
+
+    private fun trace(event: String) {
+        if (kotlin.native.Platform.isDebugBinary) {
+            println("SniffSubPlayer WebKit: $event; views=$viewCreations, starts=$navigationStarts, " +
+                "UA reloads=$userAgentReloads, recoveries=$automaticRecoveryAttempts, blocked=$automaticRecoveryBlocked")
+        }
+    }
+
+    private companion object {
+        const val MAX_AUTOMATIC_RECOVERIES = 1
     }
 }
 
@@ -140,6 +208,7 @@ private class BrowserDelegate(
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didStartProvisionalNavigation: WKNavigation?) {
         if (released) return
+        controller.recordNavigationStart()
         controller.sniffRevision = null
         session.updatePage(webView.URL?.absoluteString, started = true)
     }
@@ -167,7 +236,7 @@ private class BrowserDelegate(
     }
 
     override fun webViewWebContentProcessDidTerminate(webView: WKWebView) {
-        if (!released) session.handleRendererGone()
+        if (!released) controller.handleRendererTermination(webView)
     }
 }
 
