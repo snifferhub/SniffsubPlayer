@@ -13,19 +13,21 @@
 | `shared/src/commonMain` | 浏览器状态、原生历史快照、标签页会话、候选资源解析、字幕解析与时间轴、偏好设置与收藏修改逻辑、广告设置状态模型、Cookie 服务接口 |
 | `shared/src/androidMain` | Android CookieManager、URL/时钟/ID 平台实现 |
 | `shared/src/iosMain` | WKHTTPCookieStore、NSUserDefaults 偏好持久化与旧 Swift 数据迁移、URL/时钟/ID 平台实现 |
-| `composeApp/src/commonMain` | 共享浏览器地址栏、工具栏、标签页、候选列表、设置页、收藏夹、广告屏蔽设置 UI 及嗅探 JS 资源 |
+| `composeApp/src/commonMain` | Android 使用的可复用 Compose 浏览器、设置、收藏、广告设置组件，以及嗅探 JS 资源和 UA 选项 |
 | `composeApp/src/androidMain` | Android WebView 接入、生命周期与内容过滤接口 |
-| `composeApp/src/iosMain` | WKWebView 接入、Compose UIViewController 与 Swift 回调桥接 |
+| `composeApp/src/iosMain` | WKWebView 接入、原生 UIViewController 容器与共享状态 / SwiftUI 回调桥接，不渲染 Material UI |
 | `app` | Android 应用入口与导航、Media3 播放器、偏好持久化、广告过滤、字幕下载与应用更新 |
-| `iosApp` | iOS Xcode 工程、Compose 宿主与桥接、暂留的 AVPlayer 播放器及字幕搜索 UI、原生广告规则处理 |
+| `iosApp` | iOS Xcode 工程、SwiftUI 页面与系统导航、AVPlayer 播放器及字幕搜索 UI、原生广告规则处理 |
 
 历史模型保存 WebView / WKWebView 的实际前进后退列表快照。iOS 的每个标签页有独立会话和原生视图，标签页目前仅在进程内保存。Android 当前为单会话、单 WebView，继续恢复当前页面地址；多标签页仍在计划中。
 
-浏览器、设置、收藏夹、广告屏蔽设置 UI 已由两端共用 Compose 实现；浏览器状态、媒体候选模型、字幕解析与时间轴、UA/主题色/收藏修改逻辑位于共享 Kotlin 层。Android 保留原有应用导航和更新入口，iOS 通过共享 `AppScreen` 导航并隐藏 Android 更新入口。
+Apple 端按原生设计独立呈现浏览器、设置、收藏夹、广告订阅和媒体候选列表，使用 SwiftUI 的 `NavigationStack`、`Form`、`List`、系统弹层和 SF Symbols；Android 继续使用 Compose。浏览器状态、标签页会话、媒体候选模型、字幕解析与时间轴、UA/播放器颜色/收藏修改逻辑仍位于共享 Kotlin 层。`IosBrowserHost` 将状态流推送给 SwiftUI，并管理保留的 WKWebView；切换页面不会销毁浏览会话。
+
+Apple 端底部使用原生 `TabView` 的“浏览器 / 设置”导航。使用 iOS 26 SDK 或更新 SDK 编译后，iOS 26 及以上由系统提供 Liquid Glass；iOS 16–18 使用各自系统的原生标签栏，不绘制仿玻璃背景。iPad 的标签容器使用紧凑宽度特征以保持底部位置，页面内容恢复实际宽度特征。嗅探是浏览器工具栏操作，不占用导航标签。浏览器主页使用系统中性色，用户选择的颜色仅用于播放器进度条。
 
 iOS 首次读取时，将原有 `SniffSubPlayer.userAgent`、`SniffSubPlayer.playerAccentColor` 和 `SniffSubPlayer.bookmarks` 导入 Kotlin 管理的偏好数据，保留收藏 ID 与创建时间。若解码失败，保留原始数据并显示错误，不用空收藏覆盖旧数据。主题色继续同步到原生播放器使用的旧存储键。
 
-旧 Swift `BrowserStore`、浏览器/设置/收藏列表 UI、重复媒体分类及收藏模型已删除。`iosApp` 当前仍含尚未迁移的功能代码，不能把目录整理当作完成迁移：播放器控件和字幕搜索仍是两端实现；广告设置 UI 与状态模型共享，规则下载、缓存、转换和应用仍由 Android 规则引擎及 iOS `AdBlockManager` 分别负责。iOS 转换依赖 `SafariConverterLib`，规则编译和应用依赖 WebKit。Cookie 接口及两端实现已提供，但播放器请求尚未接入 Cookie，也没有跨设备 Cookie 同步。
+旧 Swift `BrowserStore`、重复媒体分类及收藏模型已删除；SwiftUI 界面通过桥接调用共享业务，不重新实现浏览器业务逻辑。`iosApp` 当前仍含尚未迁移的功能代码，不能把原生 UI 适配当作完成业务迁移：播放器控件和字幕搜索仍是两端实现；广告规则下载、缓存、转换和应用仍由 Android 规则引擎及 iOS `AdBlockManager` 分别负责。iOS 转换依赖 `SafariConverterLib`，规则编译和应用依赖 WebKit。Cookie 接口及两端实现已提供，但播放器请求尚未接入 Cookie，也没有跨设备 Cookie 同步。
 
 迁移确认可用后，初期计划只保留 `main`；`dev` 留待以后需要时建立。旧 Android worktree 已在确认源码与 GitHub `Android` 分支一致后按维护者要求删除；现有本地和远端分支尚未删除，远端发布策略不变。目录清理不代表迁移已验证可用。
 

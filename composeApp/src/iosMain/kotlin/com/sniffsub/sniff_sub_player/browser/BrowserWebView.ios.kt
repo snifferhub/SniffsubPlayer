@@ -2,150 +2,124 @@
 
 package com.sniffsub.sniff_sub_player.browser
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.viewinterop.UIKitView
-import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
-import androidx.compose.ui.viewinterop.UIKitInteropProperties
-import com.sniffsub.composeapp.resources.Res
-import kotlinx.cinterop.readValue
 import kotlinx.cinterop.ObjCSignatureOverride
-import kotlinx.coroutines.delay
+import kotlinx.cinterop.readValue
 import platform.CoreGraphics.CGRectZero
 import platform.Foundation.NSError
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequest
+import platform.UIKit.UIView
+import platform.UIKit.UIViewAutoresizingFlexibleHeight
+import platform.UIKit.UIViewAutoresizingFlexibleWidth
 import platform.darwin.NSObject
 import platform.WebKit.*
 
-class IosWebViewController {
+/** A retained WKWebView per shared session, independent of the SwiftUI view lifecycle. */
+internal class IosWebViewController(
+    private val session: BrowserSession,
+    private val configure: (WKWebView, () -> Unit) -> Unit,
+) {
     internal var view: WKWebView? = null
     internal var sniffRevision: Long? = null
-    internal var rulesRevision: Long? = null
-    internal var ready = false
+    private var rulesRevision: Long? = null
+    private var generation: Int? = null
+    private var ready = false
     private var pendingUrl: String? = null
+    private var delegate: BrowserDelegate? = null
 
     fun loadUrl(url: String) {
         if (!ready) { pendingUrl = url; return }
         NSURL(string = url)?.let { view?.loadRequest(NSURLRequest(uRL = it)) }
     }
-    internal fun configured() {
-        ready = true
-        pendingUrl?.let { pendingUrl = null; loadUrl(it) }
-    }
     fun goBack() { view?.takeIf { it.canGoBack }?.goBack() }
     fun goForward() { view?.takeIf { it.canGoForward }?.goForward() }
     fun reload() { view?.reload() }
-}
-
-@Composable
-internal fun IosBrowserWebView(
-    state: BrowserUiState,
-    session: BrowserSession,
-    controller: IosWebViewController,
-    isActive: Boolean,
-    filterRevision: Long,
-    configure: (WKWebView, () -> Unit) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val script by produceState<String?>(null) {
-        value = Res.readBytes("files/sniffer.js").decodeToString()
+    fun stopLoading() {
+        view?.stopLoading()
+        session.setLoading(false)
     }
-    val delegate = remember(session, state.webViewGeneration) { BrowserDelegate(session, controller) }
-    delegate.active = isActive
 
-    // Sample native navigation properties only while visible, including history.pushState changes.
-    LaunchedEffect(controller, isActive) {
-        if (!isActive) {
-            session.stopSniff()
-            controller.view?.evaluateJavaScript(STOP_SCANNER, null)
-            return@LaunchedEffect
+    fun sampleNavigation() {
+        view?.let { webView ->
+            session.updatePage(webView.URL?.absoluteString, webView.title)
+            session.setLoading(webView.loading, webView.estimatedProgress)
+            session.setHistory(webView.historySnapshot())
         }
-        while (isActive) {
-            controller.view?.let { view ->
-                session.updatePage(view.URL?.absoluteString, view.title)
-                session.setLoading(view.loading, view.estimatedProgress)
-                session.setHistory(view.historySnapshot())
+    }
+
+    fun update(parent: UIView, state: BrowserUiState, active: Boolean, filterRevision: Long, script: String?) {
+        if (view == null || generation != state.webViewGeneration) {
+            release()
+            generation = state.webViewGeneration
+            val navigation = BrowserDelegate(session, this).also { delegate = it }
+            val configuration = WKWebViewConfiguration().apply {
+                websiteDataStore = WKWebsiteDataStore.defaultDataStore()
+                allowsInlineMediaPlayback = true
+                mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone
+                userContentController.addScriptMessageHandler(navigation, name = BRIDGE)
             }
-            delay(100)
+            val created = WKWebView(frame = CGRectZero.readValue(), configuration = configuration).apply {
+                navigationDelegate = navigation
+                allowsBackForwardNavigationGestures = true
+                customUserAgent = state.userAgent.ifBlank { null }
+                autoresizingMask = UIViewAutoresizingFlexibleWidth or UIViewAutoresizingFlexibleHeight
+                setFrame(parent.bounds)
+            }
+            view = created
+            parent.addSubview(created)
+            rulesRevision = filterRevision
+            if (state.address.isNotBlank()) pendingUrl = state.address
+            configure(created) {
+                if (view === created) {
+                    ready = true
+                    pendingUrl?.let { pendingUrl = null; loadUrl(it) }
+                }
+            }
+        }
+        val webView = view ?: return
+        delegate?.active = active
+        webView.hidden = !active
+        webView.userInteractionEnabled = active
+        val desiredUserAgent = state.userAgent.ifBlank { null }
+        val userAgentChanged = webView.customUserAgent != desiredUserAgent
+        webView.customUserAgent = desiredUserAgent
+        if (rulesRevision != filterRevision) {
+            rulesRevision = filterRevision
+            configure(webView) {}
+        }
+        if (userAgentChanged && ready && webView.URL != null) {
+            session.prepareReload()
+            reload()
+        }
+        if (!active || !state.snifferEnabled) {
+            if (sniffRevision != null) {
+                webView.evaluateJavaScript(STOP_SCANNER, null)
+                sniffRevision = null
+            }
+        } else if (script != null && sniffRevision != state.sniffRequestRevision) {
+            sniffRevision = state.sniffRequestRevision
+            webView.evaluateJavaScript(
+                "window.SniffBridge = { report: function(json) { window.webkit.messageHandlers.$BRIDGE.postMessage(json); } };\n" +
+                    "window.__sniffSubPlayerRequest = ${state.sniffRequestRevision};\n$script",
+            ) { _, error -> if (error != null) session.setTransientMessage("嗅探脚本执行失败") }
         }
     }
 
-    key(state.webViewGeneration) {
-        UIKitView(
-            modifier = modifier,
-            factory = {
-                val configuration = WKWebViewConfiguration().apply {
-                    websiteDataStore = WKWebsiteDataStore.defaultDataStore()
-                    allowsInlineMediaPlayback = true
-                    mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone
-                    userContentController.addScriptMessageHandler(delegate, name = BRIDGE)
-                }
-                WKWebView(frame = CGRectZero.readValue(), configuration = configuration).apply {
-                    navigationDelegate = delegate
-                    allowsBackForwardNavigationGestures = true
-                    customUserAgent = state.userAgent.ifBlank { null }
-                    controller.view = this
-                    controller.ready = false
-                    val createdView = this
-                    configure(this) { if (controller.view === createdView) controller.configured() }
-                    controller.rulesRevision = filterRevision
-                    if (state.address.isNotBlank()) controller.loadUrl(state.address)
-                }
-            },
-            update = { view ->
-                view.hidden = !isActive
-                view.userInteractionEnabled = isActive
-                val desiredUserAgent = state.userAgent.ifBlank { null }
-                val userAgentChanged = view.customUserAgent != desiredUserAgent
-                view.customUserAgent = desiredUserAgent
-                if (controller.rulesRevision != filterRevision) {
-                    configure(view) {}
-                    controller.rulesRevision = filterRevision
-                }
-                val requested = state.address.trim()
-                if (requested.isNotBlank() && requested != view.URL?.absoluteString &&
-                    (view.URL == null || requested != state.currentPageUrl)) {
-                    controller.loadUrl(requested)
-                } else if (userAgentChanged && controller.ready && view.URL != null) {
-                    session.prepareReload()
-                    controller.reload()
-                }
-                if (!isActive || !state.snifferEnabled) {
-                    if (controller.sniffRevision != null) {
-                        view.evaluateJavaScript(STOP_SCANNER, null)
-                        controller.sniffRevision = null
-                    }
-                } else if (script != null && controller.sniffRevision != state.sniffRequestRevision) {
-                    controller.sniffRevision = state.sniffRequestRevision
-                    view.evaluateJavaScript(
-                        "window.SniffBridge = { report: function(json) { window.webkit.messageHandlers.$BRIDGE.postMessage(json); } };\n" +
-                            "window.__sniffSubPlayerRequest = ${state.sniffRequestRevision};\n$script",
-                    ) { _, error -> if (error != null) session.setTransientMessage("嗅探脚本执行失败") }
-                }
-            },
-            onRelease = { view ->
-                delegate.released = true
-                view.stopLoading()
-                view.evaluateJavaScript(STOP_SCANNER, null)
-                view.navigationDelegate = null
-                view.configuration.userContentController.removeScriptMessageHandlerForName(BRIDGE)
-                if (controller.view === view) {
-                    controller.view = null
-                    controller.ready = false
-                    controller.sniffRevision = null
-                }
-            },
-            properties = UIKitInteropProperties(
-                interactionMode = UIKitInteropInteractionMode.NonCooperative,
-                isNativeAccessibilityEnabled = true,
-            ),
-        )
+    fun release() {
+        delegate?.released = true
+        view?.let {
+            it.stopLoading()
+            it.evaluateJavaScript(STOP_SCANNER, null)
+            it.navigationDelegate = null
+            it.configuration.userContentController.removeScriptMessageHandlerForName(BRIDGE)
+            it.removeFromSuperview()
+        }
+        view = null
+        delegate = null
+        ready = false
+        pendingUrl = null
+        sniffRevision = null
+        rulesRevision = null
     }
 }
 
@@ -159,7 +133,6 @@ private class BrowserDelegate(
     override fun userContentController(userContentController: WKUserContentController, didReceiveScriptMessage: WKScriptMessage) {
         if (!active || released || !didReceiveScriptMessage.frameInfo.mainFrame) return
         val json = didReceiveScriptMessage.body as? String ?: return
-        // Invalidate stale SPA callbacks before applying the scan/page token checks.
         session.updatePage(controller.view?.URL?.absoluteString)
         session.acceptSnifferPayload(json)
     }
@@ -181,14 +154,14 @@ private class BrowserDelegate(
 
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didFailProvisionalNavigation: WKNavigation?, withError: NSError) {
-        if (released) return
+        if (released || withError.code == -999L) return // WebKit cancels superseded navigations normally.
         session.setLoading(false, 0.0)
         session.setTransientMessage(withError.localizedDescription)
     }
 
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didFailNavigation: WKNavigation?, withError: NSError) {
-        if (released) return
+        if (released || withError.code == -999L) return
         session.setLoading(false, 0.0)
         session.setTransientMessage(withError.localizedDescription)
     }

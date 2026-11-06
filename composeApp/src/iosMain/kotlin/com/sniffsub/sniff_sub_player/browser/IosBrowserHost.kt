@@ -2,186 +2,194 @@
 
 package com.sniffsub.sniff_sub_player.browser
 
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.window.ComposeUIViewController
-import androidx.compose.ui.zIndex
-import com.sniffsub.sniff_sub_player.adblock.AdBlockState
-import com.sniffsub.sniff_sub_player.app.AppScreen
+import com.sniffsub.composeapp.resources.Res
+import com.sniffsub.sniff_sub_player.data.AppPreferences
 import com.sniffsub.sniff_sub_player.data.IosAppPreferencesRepository
 import com.sniffsub.sniff_sub_player.data.PreferencesEditor
-import com.sniffsub.sniff_sub_player.settings.AdBlockSettingsActions
-import com.sniffsub.sniff_sub_player.settings.SettingsActions
+import com.sniffsub.sniff_sub_player.settings.USER_AGENT_OPTIONS
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import platform.UIKit.UIColor
 import platform.UIKit.UIViewController
+import platform.UIKit.systemBackgroundColor
 import platform.WebKit.WKWebView
 
+/** SwiftUI owns presentation; Kotlin owns browser sessions, preferences and WebKit integration. */
 interface IosBrowserCallbacks {
-    fun openCandidate(candidate: MediaCandidate)
+    fun stateChanged(state: BrowserUiState, tabs: BrowserTabsState, preferences: AppPreferences)
+    fun reportError(message: String)
     fun configureWebView(view: WKWebView, onReady: () -> Unit)
-    fun setAdBlockEnabled(enabled: Boolean)
-    fun setAutomaticUpdatesEnabled(enabled: Boolean)
-    fun setSubscriptionEnabled(id: String, enabled: Boolean)
-    fun addSubscription(url: String): String?
-    fun removeSubscription(id: String)
-    fun refreshRules()
 }
 
 class IosBrowserHost {
     private val scope = MainScope()
     private val preferences = IosAppPreferencesRepository()
     private val editor = PreferencesEditor(preferences)
-    val workspace = BrowserWorkspace(scope, preferences)
-    val cookieService: CookieService = createCookieService()
-    var callbacks: IosBrowserCallbacks? = null
+    private val workspace = BrowserWorkspace(scope, preferences)
+    private var callbacks: IosBrowserCallbacks? = null
     private val controllers = mutableMapOf<String, IosWebViewController>()
-    private var active by mutableStateOf(true)
-    private var adBlockState by mutableStateOf(AdBlockState())
-    private var errorMessage by mutableStateOf(preferences.migrationFailure())
+    private val observations = mutableMapOf<String, Job>()
+    private val activity = MutableStateFlow(false)
+    private val active get() = activity.value
+    private var filterRevision = 0L
+    private var script: String? = null
+    private var started = false
+    private var closed = false
+    private var container: BrowserContainerController? = null
 
-    fun setActive(value: Boolean) {
-        active = value
-        if (!value) workspace.stopAllSniffing()
-    }
+    fun currentState(): BrowserUiState = workspace.uiState.value
+    fun currentTabs(): BrowserTabsState = workspace.tabs.value
+    fun currentPreferences(): AppPreferences = preferences.values.value
+    fun userAgentOptions() = USER_AGENT_OPTIONS
 
-    fun updateAdBlockState(state: AdBlockState) { adBlockState = state }
-
-    fun loadAddress(address: String) {
-        workspace.activeSession.submitAddress(address)?.let {
-            controllers[workspace.tabs.value.selectedId]?.loadUrl(it)
+    fun start(callbacks: IosBrowserCallbacks) {
+        check(!closed)
+        this.callbacks = callbacks
+        if (started) return
+        started = true
+        scope.launch {
+            combine(workspace.uiState, workspace.tabs, preferences.values) { state, tabs, settings ->
+                Triple(state, tabs, settings)
+            }.collect { (state, tabs, settings) ->
+                this@IosBrowserHost.callbacks?.stateChanged(state, tabs, settings)
+            }
+        }
+        scope.launch { workspace.tabs.collect { syncWebViews() } }
+        preferences.migrationFailure()?.let { callbacks.reportError(it) }
+        scope.launch {
+            try {
+                script = Res.readBytes("files/sniffer.js").decodeToString()
+                syncWebViews()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                this@IosBrowserHost.callbacks?.reportError(error.message ?: "无法加载嗅探脚本")
+            }
+        }
+        scope.launch {
+            activity.collectLatest { visible ->
+                if (visible) {
+                    while (true) {
+                        controllers[workspace.tabs.value.selectedId]?.sampleNavigation()
+                        delay(100)
+                    }
+                }
+            }
         }
     }
 
+    fun createViewController(): UIViewController = container ?: BrowserContainerController().also {
+        container = it
+        it.view.backgroundColor = UIColor.systemBackgroundColor
+        syncWebViews()
+    }
+
+    fun setActive(value: Boolean) {
+        if (active == value) return
+        activity.value = value
+        if (!value) workspace.stopAllSniffing()
+        syncWebViews()
+    }
+
+    fun setFilterRevision(value: Long) {
+        filterRevision = value
+        syncWebViews()
+    }
+
+    fun loadAddress(address: String) {
+        workspace.activeSession.submitAddress(address)?.let { url ->
+            controllers[workspace.tabs.value.selectedId]?.loadUrl(url)
+        }
+    }
+
+    fun goBack() { controllers[workspace.tabs.value.selectedId]?.goBack() }
+    fun goForward() { controllers[workspace.tabs.value.selectedId]?.goForward() }
+    fun reload() {
+        workspace.activeSession.prepareReload()
+        controllers[workspace.tabs.value.selectedId]?.reload()
+    }
+    fun stopLoading() { controllers[workspace.tabs.value.selectedId]?.stopLoading() }
+    fun requestSniff() = workspace.activeSession.requestSniff()
+    fun dismissCandidates() = workspace.activeSession.dismissCandidateSheet()
+    fun clearCandidates() = workspace.activeSession.clearCandidates()
+    fun stopSniffing() = workspace.stopAllSniffing()
+    fun toggleBookmark() = workspace.activeSession.toggleBookmark()
+    fun clearMessage() = workspace.activeSession.clearTransientMessage()
+    fun addTab() = workspace.addTab()
+    fun selectTab(id: String) = workspace.selectTab(id)
+    fun closeTab(id: String) = workspace.closeTab(id)
+    fun setUserAgent(value: String) = edit { editor.setUserAgent(value) }
+    fun setPlayerAccent(value: Long) = edit { editor.setAccent(value) }
+    fun resetPlayerAccent() = edit { editor.resetAccent() }
+    fun removeBookmark(id: String) = edit { editor.removeBookmark(id) }
+
     fun close() {
+        if (closed) return
+        closed = true
         callbacks = null
         workspace.close()
         scope.cancel()
+        observations.clear()
+        controllers.values.forEach { it.release() }
         controllers.clear()
-    }
-
-    fun createViewController(): UIViewController = ComposeUIViewController {
-        val settings by preferences.values.collectAsState()
-        val accentArgb = settings.accentArgb
-        val colors = if (isSystemInDarkTheme()) darkColorScheme(primary = Color(accentArgb))
-        else lightColorScheme(primary = Color(accentArgb))
-        MaterialTheme(colorScheme = colors) {
-            AppScreen(
-                preferences = settings,
-                adBlockState = adBlockState,
-                settingsActions = SettingsActions(
-                    onBack = {},
-                    onUserAgentSelected = { value -> edit { editor.setUserAgent(value) } },
-                    onAccentSelected = { value -> edit { editor.setAccent(value) } },
-                    onResetAccent = { edit { editor.resetAccent() } },
-                    onOpenBookmarks = {},
-                    onOpenAdBlock = {},
-                ),
-                adBlockActions = AdBlockSettingsActions(
-                    onBack = {},
-                    onSetEnabled = { callbacks?.setAdBlockEnabled(it) },
-                    onSetAutomaticUpdatesEnabled = { callbacks?.setAutomaticUpdatesEnabled(it) },
-                    onSetSubscriptionEnabled = { id, enabled -> callbacks?.setSubscriptionEnabled(id, enabled) },
-                    onAddSubscription = { url ->
-                        val delegate = callbacks
-                        if (delegate == null) Result.failure(IllegalStateException("规则服务尚未就绪"))
-                        else delegate.addSubscription(url)?.let { Result.failure(IllegalArgumentException(it)) }
-                            ?: Result.success(Unit)
-                    },
-                    onRemoveSubscription = { callbacks?.removeSubscription(it) },
-                    onRefresh = { callbacks?.refreshRules() },
-                ),
-                onOpenBookmark = { loadAddress(it.url) },
-                onDeleteBookmark = { bookmark -> edit { editor.removeBookmark(bookmark.id) } },
-            ) { visible -> BrowserContent(active && visible, accentArgb) }
-            errorMessage?.let { message ->
-                AlertDialog(
-                    onDismissRequest = { errorMessage = null },
-                    title = { Text("设置更新失败") },
-                    text = { Text(message) },
-                    confirmButton = {
-                        TextButton(onClick = { errorMessage = null }) { Text("确定") }
-                    },
-                )
-            }
-        }
+        container = null
     }
 
     private fun edit(action: suspend () -> Unit) {
         scope.launch {
             try { action() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { errorMessage = error.message ?: "设置更新失败" }
+            catch (error: Exception) { callbacks?.reportError(error.message ?: "设置更新失败") }
         }
     }
 
-    @Composable
-    private fun BrowserContent(browserActive: Boolean, accentArgb: Long) {
-        val tabs by workspace.tabs.collectAsState()
-        val state by workspace.uiState.collectAsState()
-        tabs.tabs.forEach { tab -> controllers.getOrPut(tab.id) { IosWebViewController() } }
-        controllers.keys.retainAll(tabs.tabs.map { it.id }.toSet())
-        val controller = controllers.getValue(tabs.selectedId)
-        val session = workspace.activeSession
-        BrowserScreen(
-            state = state,
-            isActive = browserActive,
-            accentArgb = accentArgb,
-            actions = BrowserActions(
-                onToggleBookmark = session::toggleBookmark,
-                onBack = controller::goBack,
-                onForward = controller::goForward,
-                onReload = { session.prepareReload(); controller.reload() },
-                onSubmitAddress = ::loadAddress,
-                onRequestSniff = session::requestSniff,
-                onDismissCandidates = session::dismissCandidateSheet,
-                onClearCandidates = session::clearCandidates,
-                onOpenCandidate = { session.stopSniff(); callbacks?.openCandidate(it) },
-                onConsumeTransientMessage = session::clearTransientMessage,
-            ),
-            tabsContent = {
-                BrowserTabBar(tabs, workspace::selectTab, workspace::closeTab, workspace::addTab)
-            },
-            webViewContent = {
-                Box(Modifier.fillMaxSize()) {
-                    tabs.tabs.forEach { tab ->
-                        key(tab.id) {
-                            val tabSession = workspace.session(tab.id)
-                            val tabState by tabSession.uiState.collectAsState()
-                            val selected = tab.id == tabs.selectedId
-                            IosBrowserWebView(
-                                state = tabState,
-                                session = tabSession,
-                                controller = controllers.getValue(tab.id),
-                                isActive = browserActive && selected,
-                                filterRevision = adBlockState.rulesRevision,
-                                configure = { view, ready ->
-                                    val delegate = callbacks
-                                    if (delegate == null) ready() else delegate.configureWebView(view, ready)
-                                },
-                                modifier = Modifier.fillMaxSize().zIndex(if (selected) 1f else -1f),
-                            )
-                        }
+    private fun syncWebViews() {
+        if (closed) return
+        val parent = container ?: return
+        val tabs = workspace.tabs.value
+        val removed = controllers.keys - tabs.tabs.map { it.id }.toSet()
+        removed.forEach {
+            observations.remove(it)?.cancel()
+            controllers.remove(it)?.release()
+        }
+        tabs.tabs.forEach { tab ->
+            val session = workspace.session(tab.id)
+            val controller = controllers.getOrPut(tab.id) {
+                IosWebViewController(session) { view, ready ->
+                    val delegate = callbacks
+                    if (delegate == null) ready() else delegate.configureWebView(view, ready)
+                }
+            }
+            // Observe every session, including hidden tabs, so UA changes and renderer recovery
+            // do not depend on the selected tab publishing another state update.
+            observations.getOrPut(tab.id) {
+                scope.launch {
+                    session.uiState.collect { state ->
+                        controller.update(
+                            parent.view, state, active && tab.id == workspace.tabs.value.selectedId,
+                            filterRevision, script,
+                        )
                     }
                 }
-            },
-        )
+            }
+            controller.update(
+                parent.view, session.uiState.value, active && tab.id == tabs.selectedId,
+                filterRevision, script,
+            )
+        }
+    }
+}
+
+private class BrowserContainerController : UIViewController(nibName = null, bundle = null) {
+    override fun viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        view.subviews.filterIsInstance<WKWebView>().forEach { it.setFrame(view.bounds) }
     }
 }
