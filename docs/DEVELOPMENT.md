@@ -111,6 +111,8 @@ xcodebuild -project iosApp/SniffSubPlayer.xcodeproj \
 
 Android 使用 Media3，iOS 使用 AVPlayer。iOS 以自定义 `AVPlayerLayer` 承载画面，设置 `AVAudioSession.playback`，并在进入和退出播放器时管理横屏方向。播放器保留原生字幕叠层、字幕偏移与字号设置，以及控制条自动隐藏和点击唤出。
 
+Apple 播放器支持原生进度滑块、画面横向拖动、双击左右侧前后跳转 10 秒、左侧亮度 / 右侧音量手势。速度菜单提供 0.5×、0.75×、1×、1.25×、1.5×、1.75×、2×，长按画面临时使用 2×，松开恢复所选速度。跳转统一按 AVPlayerItem 的可定位时间范围处理，拖动期间暂停时间回写，完成后按用户原来的播放 / 暂停意图及所选速度恢复；没有可定位范围的直播流禁用拖动。
+
 嗅探脚本从 `video/source/a`、`fetch`、`XMLHttpRequest` 和 `performance` 收集资源；候选分类包括 HLS、MP4、DASH、Segment、Blob 和 Other。资源识别与实际播放能力需要分别判断。
 
 ## 下一阶段

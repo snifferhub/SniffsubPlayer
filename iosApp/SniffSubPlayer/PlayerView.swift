@@ -18,6 +18,7 @@ struct PlayerView: View {
     @AppStorage("SniffSubPlayer.playerAccentColor") private var playerAccentColorID = PlayerAccentColor.defaultValue
     @State private var player = AVPlayer()
     @State private var timeObserver: Any?
+    @State private var itemObservations: [NSKeyValueObservation] = []
     @State private var cues: [SubtitleCue] = []
     @State private var subtitleTimeline = SubtitleTimeline()
     @State private var subtitleText = ""
@@ -33,9 +34,15 @@ struct PlayerView: View {
     @State private var pastedSubtitle = ""
     @State private var status = ""
     @State private var isPlaying = false
+    @State private var wantsPlayback = false
+    @State private var playbackRate: Float = 1
+    @State private var isHoldingSpeed = false
     @State private var currentTime = 0.0
     @State private var duration = 0.0
+    @State private var seekableRanges: [ClosedRange<Double>] = []
     @State private var isScrubbing = false
+    @State private var isDraggingSeek = false
+    @State private var seekRevision = 0
     @State private var searchQuery = ""
     @State private var onlineSubtitles: [OnlineSubtitle] = []
     @State private var isSearchingSubtitles = false
@@ -61,9 +68,23 @@ struct PlayerView: View {
                 onSingleTap: toggleControlsVisibility,
                 onDoubleTap: handleDoubleTap,
                 onPan: handlePan,
-                onVerticalPan: handleVerticalPan
+                onVerticalPan: handleVerticalPan,
+                onHoldChanged: setHoldingSpeed,
+                canSeek: playbackRange != nil
             )
                 .ignoresSafeArea()
+
+            if isHoldingSpeed {
+                Label(rateLabel(effectivePlaybackRate), systemImage: "forward.fill")
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.68), in: Capsule())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 18)
+                    .allowsHitTesting(false)
+            }
 
             if showSeekFeedback {
                 Label(seekFeedbackText, systemImage: seekFeedbackIcon)
@@ -103,6 +124,22 @@ struct PlayerView: View {
         }
         .animation(.easeInOut(duration: 0.22), value: showControls)
         .animation(.easeInOut(duration: 0.2), value: showingSubtitleSettings)
+        .onChange(of: playbackRate) { _ in
+            applyPlaybackRate()
+            keepControlsVisibleForInteraction()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            setHoldingSpeed(false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
+            guard let item = notification.object as? AVPlayerItem, item === player.currentItem else { return }
+            wantsPlayback = false
+            isPlaying = false
+            if duration > 0 { currentTime = duration }
+            setHoldingSpeed(false)
+            showControls = true
+            hideControlsTask?.cancel()
+        }
         .fileImporter(
             isPresented: $showingSubtitleImporter,
             allowedContentTypes: subtitleContentTypes,
@@ -126,16 +163,35 @@ struct PlayerView: View {
         .onDisappear {
             hideControlsTask?.cancel()
             seekFeedbackTask?.cancel()
+            seekRevision += 1
+            wantsPlayback = false
+            isHoldingSpeed = false
             player.pause()
             if let timeObserver {
                 player.removeTimeObserver(timeObserver)
             }
+            timeObserver = nil
+            itemObservations.forEach { $0.invalidate() }
+            itemObservations.removeAll()
+            player.replaceCurrentItem(with: nil)
             OrientationManager.unlock()
         }
     }
 
     private var playerAccentColor: Color {
         PlayerAccentColor.color(from: playerAccentColorID)
+    }
+
+    private var effectivePlaybackRate: Float {
+        isHoldingSpeed ? max(2, playbackRate) : playbackRate
+    }
+
+    private var playbackRange: ClosedRange<Double>? {
+        if let range = seekableRanges.first(where: { $0.contains(currentTime) }) ?? seekableRanges.last {
+            return range
+        }
+        guard duration > 0, player.currentItem?.status == .readyToPlay else { return nil }
+        return 0...duration
     }
 
     private var controls: some View {
@@ -146,10 +202,7 @@ struct PlayerView: View {
                 endPoint: .bottom
             )
             .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture {
-                toggleControlsVisibility()
-            }
+            .allowsHitTesting(false)
 
             VStack(spacing: 0) {
                 HStack {
@@ -170,6 +223,25 @@ struct PlayerView: View {
                     }
 
                     Spacer()
+
+                    Menu {
+                        Picker("播放速度", selection: $playbackRate) {
+                            ForEach([Float(0.5), 0.75, 1, 1.25, 1.5, 1.75, 2], id: \.self) { rate in
+                                Text(rateLabel(rate)).tag(rate)
+                            }
+                        }
+                    } label: {
+                        Text(rateLabel(playbackRate))
+                            .font(.subheadline.monospacedDigit().weight(.semibold))
+                            .frame(minWidth: 52, minHeight: 44)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        showControls = true
+                        hideControlsTask?.cancel()
+                    })
+                    .accessibilityLabel("播放速度")
+                    .accessibilityValue(rateLabel(playbackRate))
 
                     Button {
                         keepControlsVisibleForInteraction()
@@ -196,30 +268,19 @@ struct PlayerView: View {
 
                     PlayerProgressBar(
                         value: Binding(
-                            get: { currentTime },
-                            set: {
-                                isScrubbing = true
-                                currentTime = $0
-                                keepControlsVisibleForInteraction()
-                            }
+                            get: { clampedPlaybackTime(currentTime) },
+                            set: previewSeek
                         ),
-                        range: 0...max(duration, 1),
+                        range: playbackRange ?? 0...1,
                         accentColor: playerAccentColor,
                         onEditingChanged: { editing in
-                            if !editing {
-                                let target = CMTime(seconds: currentTime, preferredTimescale: 600)
-                                let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
-                                player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance) { _ in
-                                    Task { @MainActor in
-                                        isScrubbing = false
-                                    }
-                                }
-                                scheduleControlsAutoHide()
-                            }
+                            if editing { beginScrubbing() }
+                            else { seek(to: currentTime) }
                         }
                     )
+                    .disabled(playbackRange == nil)
 
-                    Text(formatTime(duration))
+                    Text(formatTime(duration > 0 ? duration : playbackRange?.upperBound ?? 0))
                         .frame(width: 54, alignment: .trailing)
                 }
                 .font(.caption.monospacedDigit())
@@ -233,8 +294,9 @@ struct PlayerView: View {
                     keepControlsVisibleForInteraction()
                     seekBy(-10)
                 }
+                .disabled(playbackRange == nil)
 
-                playerControlButton(systemName: isPlaying ? "pause.fill" : "play.fill", size: 31, prominent: true) {
+                playerControlButton(systemName: wantsPlayback ? "pause.fill" : "play.fill", size: 31, prominent: true) {
                     keepControlsVisibleForInteraction()
                     togglePlay()
                 }
@@ -243,6 +305,7 @@ struct PlayerView: View {
                     keepControlsVisibleForInteraction()
                     seekBy(10)
                 }
+                .disabled(playbackRange == nil)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -539,50 +602,179 @@ struct PlayerView: View {
 
         let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
         let item = AVPlayerItem(asset: asset)
+        currentTime = 0
+        duration = 0
+        seekableRanges = []
+        isScrubbing = false
+        isDraggingSeek = false
+        item.audioTimePitchAlgorithm = .spectral
+        itemObservations.forEach { $0.invalidate() }
+        itemObservations = [
+            item.observe(\.status, options: [.initial, .new]) { observedItem, _ in
+                Task { @MainActor in
+                    guard player.currentItem === observedItem else { return }
+                    refreshPlaybackTimeline()
+                    if observedItem.status == .failed {
+                        status = observedItem.error?.localizedDescription ?? "视频加载失败"
+                        wantsPlayback = false
+                        isPlaying = false
+                        setHoldingSpeed(false)
+                        showControls = true
+                        hideControlsTask?.cancel()
+                    }
+                }
+            },
+            item.observe(\.duration, options: [.new]) { observedItem, _ in
+                Task { @MainActor in
+                    guard player.currentItem === observedItem else { return }
+                    refreshPlaybackTimeline()
+                }
+            },
+            item.observe(\.seekableTimeRanges, options: [.new]) { observedItem, _ in
+                Task { @MainActor in
+                    guard player.currentItem === observedItem else { return }
+                    refreshPlaybackTimeline()
+                }
+            }
+        ]
         player.replaceCurrentItem(with: item)
         player.volume = 1
         player.isMuted = false
-        player.play()
+        wantsPlayback = true
+        applyPlaybackRate()
         isPlaying = true
     }
 
+    private func refreshPlaybackTimeline() {
+        guard let item = player.currentItem else { return }
+        let itemDuration = item.duration.seconds
+        duration = itemDuration.isFinite && itemDuration > 0 ? itemDuration : 0
+        seekableRanges = item.seekableTimeRanges.compactMap { value in
+            let range = value.timeRangeValue
+            let start = range.start.seconds
+            let end = CMTimeRangeGetEnd(range).seconds
+            guard start.isFinite, end.isFinite, start >= 0, end > start else { return nil }
+            return start...end
+        }
+    }
+
     private func addTimeObserver() {
+        guard timeObserver == nil else { return }
         let interval = CMTime(seconds: 0.2, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            refreshPlaybackTimeline()
             if !isScrubbing {
                 currentTime = time.seconds.isFinite ? time.seconds : 0
             }
-            duration = player.currentItem?.duration.seconds ?? 0
-            if !duration.isFinite { duration = 0 }
             let wasPlaying = isPlaying
             isPlaying = player.timeControlStatus == .playing
             if isPlaying && !wasPlaying {
                 scheduleControlsAutoHide()
             }
-            updateSubtitle(at: time.seconds)
+            updateSubtitle(at: currentTime)
         }
     }
 
+    private func rateLabel(_ rate: Float) -> String {
+        "\(rate.formatted(.number.precision(.fractionLength(0...2))))×"
+    }
+
+    private func applyPlaybackRate() {
+        player.defaultRate = effectivePlaybackRate
+        if wantsPlayback && !isScrubbing { player.play() }
+    }
+
+    private func setHoldingSpeed(_ holding: Bool) {
+        guard holding != isHoldingSpeed else { return }
+        if holding {
+            guard wantsPlayback, !isScrubbing, !showingSubtitleSettings,
+                  player.currentItem?.status == .readyToPlay else { return }
+            hideControlsTask?.cancel()
+        }
+        isHoldingSpeed = holding
+        applyPlaybackRate()
+        if !holding { scheduleControlsAutoHide() }
+    }
+
     private func togglePlay() {
-        if player.timeControlStatus == .playing {
+        if wantsPlayback {
+            wantsPlayback = false
+            setHoldingSpeed(false)
             player.pause()
             isPlaying = false
             showControls = true
             hideControlsTask?.cancel()
         } else {
-            player.play()
-            isPlaying = true
+            wantsPlayback = true
+            if duration > 0, currentTime >= duration - 0.1, let range = playbackRange {
+                seek(to: range.lowerBound)
+            } else {
+                applyPlaybackRate()
+            }
             scheduleControlsAutoHide()
         }
     }
 
+    private func clampedPlaybackTime(_ seconds: Double) -> Double {
+        guard let range = playbackRange else { return 0 }
+        return min(range.upperBound, max(range.lowerBound, seconds.isFinite ? seconds : range.lowerBound))
+    }
+
+    private func beginScrubbing() {
+        guard playbackRange != nil, !isDraggingSeek else { return }
+        seekRevision += 1
+        isDraggingSeek = true
+        isScrubbing = true
+        player.pause()
+        showControls = true
+        hideControlsTask?.cancel()
+    }
+
+    private func previewSeek(_ seconds: Double) {
+        guard playbackRange != nil else { return }
+        beginScrubbing()
+        currentTime = clampedPlaybackTime(seconds)
+        updateSubtitle(at: currentTime)
+    }
+
+    private func seek(to seconds: Double) {
+        guard playbackRange != nil, let item = player.currentItem, item.status == .readyToPlay else {
+            isDraggingSeek = false
+            isScrubbing = false
+            applyPlaybackRate()
+            scheduleControlsAutoHide()
+            return
+        }
+        let target = clampedPlaybackTime(seconds)
+        currentTime = target
+        updateSubtitle(at: target)
+        isDraggingSeek = false
+        isScrubbing = true
+        player.pause()
+        hideControlsTask?.cancel()
+        seekRevision += 1
+        let revision = seekRevision
+        let tolerance = CMTime(seconds: 0.1, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                    toleranceBefore: tolerance, toleranceAfter: tolerance) { _ in
+            Task { @MainActor in
+                guard revision == seekRevision, player.currentItem === item else { return }
+                isScrubbing = false
+                let actualTime = player.currentTime().seconds
+                if actualTime.isFinite { currentTime = actualTime }
+                updateSubtitle(at: currentTime)
+                applyPlaybackRate()
+                scheduleControlsAutoHide()
+            }
+        }
+    }
+
     private func seekBy(_ delta: TimeInterval) {
-        let next = max(0, min(duration > 0 ? duration : .greatestFiniteMagnitude, currentTime + delta))
-        currentTime = next
-        player.seek(to: CMTime(seconds: next, preferredTimescale: 600))
+        seek(to: currentTime + delta)
     }
 
     private func handleDoubleTap(_ direction: PlayerSeekDirection) {
+        guard playbackRange != nil else { return }
         let delta: TimeInterval = direction == .forward ? 10 : -10
         seekBy(delta)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -606,35 +798,36 @@ struct PlayerView: View {
     }
 
     private func handlePan(_ event: PlayerPanEvent) {
-        guard duration.isFinite, duration > 0 else { return }
-
         switch event {
         case .began:
+            guard playbackRange != nil else { return }
             seekFeedbackTask?.cancel()
             panStartTime = currentTime
-            isScrubbing = true
+            beginScrubbing()
             seekFeedbackIcon = "arrow.left.and.right"
+            seekFeedbackText = formatTime(currentTime)
             showSeekFeedback = true
 
         case .changed(let progress):
-            let seekRange = min(max(duration * 0.1, 60), 600)
-            currentTime = min(duration, max(0, panStartTime + Double(progress) * seekRange))
-            seekFeedbackText = "\(formatTime(currentTime)) / \(formatTime(duration))"
+            guard let range = playbackRange else { return }
+            let seekRange = min(max((range.upperBound - range.lowerBound) * 0.1, 60), 600)
+            previewSeek(panStartTime + Double(progress) * seekRange)
+            seekFeedbackText = "\(formatTime(currentTime)) / \(formatTime(range.upperBound))"
 
         case .ended:
-            let target = CMTime(seconds: currentTime, preferredTimescale: 600)
-            let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
-            player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance) { _ in
-                Task { @MainActor in
-                    isScrubbing = false
-                }
-            }
+            guard isScrubbing else { return }
+            seek(to: currentTime)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             hideSeekFeedbackAfterDelay()
 
         case .cancelled:
+            guard isScrubbing else { return }
             currentTime = panStartTime
+            isDraggingSeek = false
             isScrubbing = false
+            updateSubtitle(at: currentTime)
+            applyPlaybackRate()
+            scheduleControlsAutoHide()
             hideSeekFeedbackAfterDelay()
         }
     }
@@ -748,6 +941,7 @@ struct PlayerView: View {
     private func scheduleControlsAutoHide() {
         hideControlsTask?.cancel()
 
+        guard !isScrubbing, !isHoldingSpeed, !showingSubtitleSettings else { return }
         guard player.timeControlStatus == .playing || isPlaying else {
             showControls = true
             return
@@ -760,6 +954,9 @@ struct PlayerView: View {
                 guard !showingPasteSheet,
                       !showingSubtitleSearch,
                       !showingSubtitleImporter,
+                      !showingSubtitleSettings,
+                      !isScrubbing,
+                      !isHoldingSpeed,
                       subtitlecatPage == nil,
                       player.timeControlStatus == .playing else {
                     return
@@ -858,52 +1055,15 @@ struct PlayerProgressBar: View {
     let accentColor: Color
     let onEditingChanged: (Bool) -> Void
 
-    @State private var isEditing = false
-
     var body: some View {
-        GeometryReader { geometry in
-            let width = max(geometry.size.width, 1)
-            let fraction = progressFraction
-
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.28))
-                    .frame(height: 4)
-
-                Capsule()
-                    .fill(accentColor)
-                    .frame(width: width * fraction, height: 4)
-
-                Circle()
-                    .fill(.white)
-                    .frame(width: 14, height: 14)
-                    .shadow(color: .black.opacity(0.28), radius: 3, y: 1)
-                    .offset(x: max(0, min(width - 14, width * fraction - 7)))
-            }
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                    .onChanged { gesture in
-                        if !isEditing {
-                            isEditing = true
-                            onEditingChanged(true)
-                        }
-                        updateValue(at: gesture.location.x, width: width)
-                    }
-                    .onEnded { gesture in
-                        updateValue(at: gesture.location.x, width: width)
-                        isEditing = false
-                        onEditingChanged(false)
-                    }
-            )
-        }
-        .frame(height: 30)
-        .accessibilityElement()
+        Slider(value: $value, in: range, onEditingChanged: onEditingChanged)
+        .tint(accentColor)
+        .frame(minHeight: 44)
         .accessibilityLabel("播放进度")
         .accessibilityValue("\(Int(progressFraction * 100))%")
         .accessibilityAdjustableAction { direction in
             let step = (range.upperBound - range.lowerBound) * 0.05
+            onEditingChanged(true)
             switch direction {
             case .increment:
                 value = min(range.upperBound, value + step)
@@ -922,10 +1082,6 @@ struct PlayerProgressBar: View {
         return CGFloat(min(1, max(0, (value - range.lowerBound) / span)))
     }
 
-    private func updateValue(at x: CGFloat, width: CGFloat) {
-        let fraction = Double(min(1, max(0, x / width)))
-        value = range.lowerBound + fraction * (range.upperBound - range.lowerBound)
-    }
 }
 
 enum PlayerSeekDirection {
@@ -958,13 +1114,17 @@ struct PlayerLayerView: UIViewRepresentable {
     let onDoubleTap: (PlayerSeekDirection) -> Void
     let onPan: (PlayerPanEvent) -> Void
     let onVerticalPan: (PlayerVerticalPanEvent) -> Void
+    let onHoldChanged: (Bool) -> Void
+    let canSeek: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             onSingleTap: onSingleTap,
             onDoubleTap: onDoubleTap,
             onPan: onPan,
-            onVerticalPan: onVerticalPan
+            onVerticalPan: onVerticalPan,
+            onHoldChanged: onHoldChanged,
+            canSeek: canSeek
         )
     }
 
@@ -982,10 +1142,15 @@ struct PlayerLayerView: UIViewRepresentable {
         let verticalPan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleVerticalPan(_:)))
         verticalPan.name = "verticalControl"
         verticalPan.delegate = context.coordinator
+        let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleHold(_:)))
+        hold.minimumPressDuration = 0.4
+        hold.allowableMovement = 15
+        singleTap.require(toFail: hold)
         view.addGestureRecognizer(singleTap)
         view.addGestureRecognizer(doubleTap)
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(verticalPan)
+        view.addGestureRecognizer(hold)
         return view
     }
 
@@ -995,6 +1160,13 @@ struct PlayerLayerView: UIViewRepresentable {
         context.coordinator.onDoubleTap = onDoubleTap
         context.coordinator.onPan = onPan
         context.coordinator.onVerticalPan = onVerticalPan
+        context.coordinator.onHoldChanged = onHoldChanged
+        context.coordinator.canSeek = canSeek
+    }
+
+    static func dismantleUIView(_ view: PlayerLayerContainerView, coordinator: Coordinator) {
+        coordinator.onHoldChanged(false)
+        view.playerLayer.player = nil
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
@@ -1002,22 +1174,39 @@ struct PlayerLayerView: UIViewRepresentable {
         var onDoubleTap: (PlayerSeekDirection) -> Void
         var onPan: (PlayerPanEvent) -> Void
         var onVerticalPan: (PlayerVerticalPanEvent) -> Void
+        var onHoldChanged: (Bool) -> Void
+        var canSeek: Bool
         private var activeVerticalControl: PlayerVerticalControl = .brightness
 
         init(
             onSingleTap: @escaping () -> Void,
             onDoubleTap: @escaping (PlayerSeekDirection) -> Void,
             onPan: @escaping (PlayerPanEvent) -> Void,
-            onVerticalPan: @escaping (PlayerVerticalPanEvent) -> Void
+            onVerticalPan: @escaping (PlayerVerticalPanEvent) -> Void,
+            onHoldChanged: @escaping (Bool) -> Void,
+            canSeek: Bool
         ) {
             self.onSingleTap = onSingleTap
             self.onDoubleTap = onDoubleTap
             self.onPan = onPan
             self.onVerticalPan = onVerticalPan
+            self.onHoldChanged = onHoldChanged
+            self.canSeek = canSeek
         }
 
         @objc func handleSingleTap() {
             onSingleTap()
+        }
+
+        @objc func handleHold(_ recognizer: UILongPressGestureRecognizer) {
+            switch recognizer.state {
+            case .began:
+                onHoldChanged(true)
+            case .ended, .cancelled, .failed:
+                onHoldChanged(false)
+            default:
+                break
+            }
         }
 
         @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
@@ -1069,7 +1258,7 @@ struct PlayerLayerView: UIViewRepresentable {
             if pan.name == "verticalControl" {
                 return abs(velocity.y) > abs(velocity.x) * 1.2
             }
-            return abs(velocity.x) > abs(velocity.y) * 1.2
+            return canSeek && abs(velocity.x) > abs(velocity.y) * 1.2
         }
     }
 }
