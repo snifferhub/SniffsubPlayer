@@ -19,6 +19,8 @@
 | `app` | Android 应用入口与导航、Media3 播放器、偏好持久化、广告过滤、字幕下载与应用更新 |
 | `iosApp` | iOS Xcode 工程、SwiftUI 页面与系统导航、AVPlayer 播放器及字幕搜索 UI、原生广告规则处理 |
 
+Kotlin 源码在各 source set 的 `kotlin` 目录下直接按功能分组，例如 `shared/src/commonMain/kotlin/browser`、`composeApp/src/iosMain/kotlin/browser`、`app/src/main/kotlin/player`。目录省略共同的 `com/sniffsub/sniff_sub_player` 包名前缀；文件内仍保留原有 `package` 声明，Android application ID、namespace 和类的完整名称不变。现有 Kotlin 测试目录采用相同布局。
+
 历史模型保存 WebView / WKWebView 的实际前进后退列表快照。iOS 的每个标签页有独立会话和原生视图，标签页目前仅在进程内保存。Android 当前为单会话、单 WebView，继续恢复当前页面地址；多标签页仍在计划中。
 
 iOS 的 UA 更新以控制器记录的已应用设置为准，默认 UA 统一为空值，不通过 WKWebView getter 的空字符串 / nil 差异判断是否刷新。每个标签页只通过一个状态订阅应用 WebView 更新；标题、进度和历史变化不会触发 UA 刷新。网页内容进程退出后，每次用户主动导航最多自动恢复一次，持续失败后等待手动刷新。Debug 构建会输出 `SniffSubPlayer WebKit` 计数日志，记录视图创建、导航开始、UA 刷新和进程恢复次数，不记录网址或 UA 内容。
@@ -105,6 +107,8 @@ xcodebuild -project iosApp/SniffSubPlayer.xcodeproj \
 工具链固定为 Kotlin 2.2.21、Compose Multiplatform 1.9.3、AGP 8.11.1、Gradle 8.14.3。原构建记录使用 Xcode 27.1，当前环境兼容性需以实际构建结果验证。编译成功不代表 WebView 手势、跨标签页媒体、Cookie 或真机播放已验证。
 
 2026-11-13：针对 iPad 网页黑屏报告，将当前标签页的显示与场景活动状态分开，并改用 Auto Layout 约束网页尺寸。Xcode 27.2 / iOS 27.2 SDK 的未签名真机 arm64 Debug 纯编译通过；未启动应用、模拟器或设备测试，尚未在 iPad 上确认黑屏是否解决。构建仍提示 iPad 非全屏应用应支持所有界面方向。
+
+同日精简 Kotlin 源码目录：89 个文件移除共同的三层包名目录，逐文件哈希核对内容一致，并更新现有 JavaScript 检查脚本中的源码路径。调整后 `shared`、`composeApp` 的 iOS arm64 源码重新编译及 Swift 宿主构建通过；未执行 Android 编译或测试。
 
 以下为原 README 保留的历史记录，本次文档调整未重新执行构建或运行验证。
 

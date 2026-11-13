@@ -2,7 +2,7 @@ const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const kotlin = readFileSync('shared/src/commonMain/kotlin/com/sniffsub/sniff_sub_player/adblock/CosmeticFiltering.kt', 'utf8');
+const kotlin = readFileSync('shared/src/commonMain/kotlin/adblock/CosmeticFiltering.kt', 'utf8');
 const template = kotlin.split('"""')[1];
 function environment() {
   let style = null;
