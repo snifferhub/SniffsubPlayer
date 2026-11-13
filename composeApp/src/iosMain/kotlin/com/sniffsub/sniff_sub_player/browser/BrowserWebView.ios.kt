@@ -8,9 +8,8 @@ import platform.CoreGraphics.CGRectZero
 import platform.Foundation.NSError
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequest
+import platform.UIKit.NSLayoutConstraint
 import platform.UIKit.UIView
-import platform.UIKit.UIViewAutoresizingFlexibleHeight
-import platform.UIKit.UIViewAutoresizingFlexibleWidth
 import platform.darwin.NSObject
 import platform.WebKit.*
 
@@ -60,10 +59,17 @@ internal class IosWebViewController(
         }
     }
 
-    fun update(parent: UIView, state: BrowserUiState, active: Boolean, filterRevision: Long, script: String?) {
+    fun update(
+        parent: UIView,
+        state: BrowserUiState,
+        selected: Boolean,
+        active: Boolean,
+        filterRevision: Long,
+        script: String?,
+    ) {
         if (automaticRecoveryBlocked) {
             // The failed view must still hide when another tab becomes active.
-            view?.hidden = !active
+            view?.hidden = !selected
             view?.userInteractionEnabled = false
             delegate?.active = false
             return
@@ -87,13 +93,20 @@ internal class IosWebViewController(
                 navigationDelegate = navigation
                 allowsBackForwardNavigationGestures = true
                 customUserAgent = initialUserAgent
-                autoresizingMask = UIViewAutoresizingFlexibleWidth or UIViewAutoresizingFlexibleHeight
-                setFrame(parent.bounds)
+                translatesAutoresizingMaskIntoConstraints = false
             }
             view = created
             viewCreations++
             trace("created")
             parent.addSubview(created)
+            // The SwiftUI container may have zero bounds when the view is created. Let
+            // Auto Layout track its final size, including iPad rotation and window resizing.
+            NSLayoutConstraint.activateConstraints(listOf(
+                created.leadingAnchor.constraintEqualToAnchor(parent.leadingAnchor),
+                created.trailingAnchor.constraintEqualToAnchor(parent.trailingAnchor),
+                created.topAnchor.constraintEqualToAnchor(parent.topAnchor),
+                created.bottomAnchor.constraintEqualToAnchor(parent.bottomAnchor),
+            ))
             rulesRevision = filterRevision
             if (state.address.isNotBlank()) pendingUrl = state.address
             configure(created) {
@@ -105,7 +118,9 @@ internal class IosWebViewController(
         }
         val webView = view ?: return
         delegate?.active = active
-        webView.hidden = !active
+        // Scene activity controls polling and sniffing, not the selected page's visibility.
+        // An inactive iPad scene must keep its page rendered instead of exposing the background.
+        webView.hidden = !selected
         webView.userInteractionEnabled = active
         val desiredUserAgent = state.userAgent.ifBlank { null }
         val userAgentChanged = appliedUserAgent != desiredUserAgent

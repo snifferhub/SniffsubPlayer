@@ -23,6 +23,8 @@
 
 iOS 的 UA 更新以控制器记录的已应用设置为准，默认 UA 统一为空值，不通过 WKWebView getter 的空字符串 / nil 差异判断是否刷新。每个标签页只通过一个状态订阅应用 WebView 更新；标题、进度和历史变化不会触发 UA 刷新。网页内容进程退出后，每次用户主动导航最多自动恢复一次，持续失败后等待手动刷新。Debug 构建会输出 `SniffSubPlayer WebKit` 计数日志，记录视图创建、导航开始、UA 刷新和进程恢复次数，不记录网址或 UA 内容。
 
+WKWebView 是否隐藏只取决于浏览器标签页是否被选中；场景活动状态只控制交互、导航采样和嗅探，避免 iPad 场景暂时失活时将当前网页隐藏而露出空白背景。网页通过四边 Auto Layout 约束填满 SwiftUI 提供的原生容器，随旋转、分屏和窗口尺寸变化调整，不依赖创建时的容器尺寸。
+
 Apple 端按原生设计独立呈现浏览器、设置、收藏夹、广告订阅和媒体候选列表，使用 SwiftUI 的 `NavigationStack`、`Form`、`List`、系统弹层和 SF Symbols；Android 继续使用 Compose。浏览器状态、标签页会话、媒体候选模型、字幕解析与时间轴、UA/播放器颜色/收藏修改逻辑仍位于共享 Kotlin 层。`IosBrowserHost` 将状态流推送给 SwiftUI，并管理保留的 WKWebView；切换页面不会销毁浏览会话。
 
 Apple 端底部使用原生 `TabView` 的“浏览器 / 设置”导航。使用 iOS 26 SDK 或更新 SDK 编译后，iOS 26 及以上由系统提供 Liquid Glass；iOS 16–18 使用各自系统的原生标签栏，不绘制仿玻璃背景。iPad 的标签容器使用紧凑宽度特征以保持底部位置，页面内容恢复实际宽度特征。嗅探是浏览器工具栏操作，不占用导航标签。浏览器主页使用系统中性色，用户选择的颜色仅用于播放器进度条。
@@ -101,6 +103,8 @@ xcodebuild -project iosApp/SniffSubPlayer.xcodeproj \
 ```
 
 工具链固定为 Kotlin 2.2.21、Compose Multiplatform 1.9.3、AGP 8.11.1、Gradle 8.14.3。原构建记录使用 Xcode 27.1，当前环境兼容性需以实际构建结果验证。编译成功不代表 WebView 手势、跨标签页媒体、Cookie 或真机播放已验证。
+
+2026-11-13：针对 iPad 网页黑屏报告，将当前标签页的显示与场景活动状态分开，并改用 Auto Layout 约束网页尺寸。Xcode 27.2 / iOS 27.2 SDK 的未签名真机 arm64 Debug 纯编译通过；未启动应用、模拟器或设备测试，尚未在 iPad 上确认黑屏是否解决。构建仍提示 iPad 非全屏应用应支持所有界面方向。
 
 以下为原 README 保留的历史记录，本次文档调整未重新执行构建或运行验证。
 

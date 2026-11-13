@@ -187,10 +187,12 @@ class IosBrowserHost {
                     combine(
                         session.uiState, activity, viewRevision,
                         workspace.tabs.map { it.selectedId }.distinctUntilChanged(),
-                    ) { state, visible, _, selectedId -> state to (visible && tab.id == selectedId) }
-                        .collect { (state, visible) ->
+                    ) { state, active, _, selectedId ->
+                        Triple(state, tab.id == selectedId, active)
+                    }
+                        .collect { (state, selected, active) ->
                             controller.update(
-                                parent.view, state, visible, filterRevision, script,
+                                parent.view, state, selected, active && selected, filterRevision, script,
                             )
                         }
                 }
@@ -199,9 +201,4 @@ class IosBrowserHost {
     }
 }
 
-private class BrowserContainerController : UIViewController(nibName = null, bundle = null) {
-    override fun viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        view.subviews.filterIsInstance<WKWebView>().forEach { it.setFrame(view.bounds) }
-    }
-}
+private class BrowserContainerController : UIViewController(nibName = null, bundle = null)
