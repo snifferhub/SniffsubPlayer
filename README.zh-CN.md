@@ -56,7 +56,19 @@
 
 ### iOS
 
-前往 **[发布页](https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest)**，在 Assets 中下载 `SniffSubPlayer-iOS-unsigned.ipa`，使用 [AltStore Classic](https://faq.altstore.io/altstore-classic/your-altstore) 等侧载工具签名并安装。IPA 不包含开发者证书，不能直接安装；使用免费 Apple 账户签名时需要定期刷新。`SHA256SUMS.txt` 同时包含 APK 和 IPA 的校验值。
+需要 iOS / iPadOS 16 及以上系统，使用自己的签名工具签名安装未签名 IPA。使用免费 Apple 账户签名时需要定期刷新。
+
+#### 在签名工具中添加源
+
+SideStore、AltStore Classic、Feather 等支持 AltStore 源的工具，可在「源」中添加以下地址，再从源中选择 SniffSubPlayer，使用自己的账号或证书签名安装：
+
+```text
+https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest/download/altstore-source.json
+```
+
+每次发布后，这个地址都会提供最新 IPA 和更新说明。在签名工具中刷新源即可检查更新，再签名安装新版；自动检查和通知的时间取决于工具自身的刷新机制。
+
+源地址在首个包含 `altstore-source.json` 的版本发布后生效。也可以**[手动下载 IPA](https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest)**：在 Assets 中下载 `SniffSubPlayer-iOS-unsigned.ipa`，导入签名工具安装。IPA 不包含开发者证书，不能直接安装。`SHA256SUMS.txt` 包含安装包和源文件的校验值。
 
 也可以打开 `iosApp/SniffSubPlayer.xcodeproj`，选择自己的 Team 后从源码构建并安装。依赖准备和构建说明见 **[iOS 本地构建](docs/DEVELOPMENT.md#ios-本地构建)**。
 

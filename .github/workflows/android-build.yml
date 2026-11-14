@@ -220,6 +220,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
@@ -227,13 +232,29 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Verify both packages and create shared checksums
+      - name: Generate signing-tool source from the unsigned IPA
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
+        run: |
+          python3 .github/scripts/altstore_source.py \
+            --ipa dist/SniffSubPlayer-iOS-unsigned.ipa \
+            --version "$APP_VERSION" --build "$RELEASE_BUILD_NUMBER" --tag "$RELEASE_TAG" \
+            --repository "$PUBLIC_RELEASE_REPOSITORY" \
+            --notes dist/release-notes.md --output dist/altstore-source.json
+          cp iosApp/SniffSubPlayer/Assets.xcassets/AppIcon.appiconset/AppIcon.png dist/icon.png
+
+      - name: Verify packages and source and create shared checksums
         run: |
           test -s dist/SniffSubPlayer-Android.apk
           test -s dist/SniffSubPlayer-iOS-unsigned.ipa
           test -s dist/release-notes.md
+          test -s dist/altstore-source.json
+          test -s dist/icon.png
           cd dist
-          sha256sum SniffSubPlayer-Android.apk SniffSubPlayer-iOS-unsigned.ipa > SHA256SUMS.txt
+          sha256sum SniffSubPlayer-Android.apk SniffSubPlayer-iOS-unsigned.ipa \
+            altstore-source.json icon.png > SHA256SUMS.txt
           sha256sum --check SHA256SUMS.txt
 
       - name: Create repository-scoped release bot token
@@ -265,9 +286,12 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" \
             dist/SniffSubPlayer-Android.apk dist/SniffSubPlayer-iOS-unsigned.ipa dist/SHA256SUMS.txt \
+            dist/altstore-source.json dist/icon.png \
             --repo "$PUBLIC_RELEASE_REPOSITORY" --clobber
           gh release edit "$RELEASE_TAG" \
             --repo "$PUBLIC_RELEASE_REPOSITORY" \
             --notes-file dist/release-notes.md --draft=false --latest
           printf 'Published Android APK and unsigned iOS IPA, build %s, to %s\n' \
             "$RELEASE_BUILD_NUMBER" "$PUBLIC_RELEASE_REPOSITORY" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Signing-tool source: https://github.com/%s/releases/latest/download/altstore-source.json\n' \
+            "$PUBLIC_RELEASE_REPOSITORY" >> "$GITHUB_STEP_SUMMARY"

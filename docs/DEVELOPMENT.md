@@ -54,9 +54,9 @@ iOS 工程部署目标为 16.0；这一配置不代表已完成最低系统版�
 
 `.github/workflows/android-build.yml` 提供 `Build and Publish Android and iOS` 工作流：每次推送到 `main`，先解析统一的版本号、构建号和更新说明，再并行编译签名 Android Release APK 与未签名 iOS 真机 arm64 Release IPA；两端都成功后统一发布。也可在 `main` 手动触发。连续推送排队执行，不取消已在执行的构建；不执行测试。
 
-安装包保存为保留 7 天的 Actions artifacts，并通过已有 GitHub App 上传到专用公开仓库 `snifferhub/SniffSubPlayer-Releases` 的同一个 GitHub Release：`SniffSubPlayer-Android.apk`、`SniffSubPlayer-iOS-unsigned.ipa` 和包含两者校验值的 `SHA256SUMS.txt`。先上传为草稿，所有文件上传完成后再公开并设为 Latest；任一平台构建失败时不发布。源码仓库仅新增对应版本标签，用于追踪后续更新说明的提交范围，不重复保存安装包。
+安装包保存为保留 7 天的 Actions artifacts，并通过已有 GitHub App 上传到专用公开仓库 `snifferhub/SniffSubPlayer-Releases` 的同一个 GitHub Release：`SniffSubPlayer-Android.apk`、`SniffSubPlayer-iOS-unsigned.ipa`、`altstore-source.json`、`icon.png` 和这些文件的 `SHA256SUMS.txt`。先上传为草稿，所有文件上传完成后再公开并设为 Latest；任一平台构建或源生成失败时不发布。源码仓库仅新增对应版本标签，用于追踪后续更新说明的提交范围，不重复保存安装包。
 
-构建号取工作流计数与已有公开 Release/源码标签最大构建号加一的较大值，在构建前通过源码标签预留，避免失败运行复用构建号。发布标签继续采用 `android-v<versionName>-build.<build>`，APK `versionCode` 继续采用 `10000 + build`，与现有 Android 应用内更新逻辑兼容。iOS 的 `CFBundleShortVersionString` 与 Android 的 `versionName` 一致，`CFBundleVersion` 使用同一构建号。唯一的发布辅助脚本 `.github/scripts/release_notes.py` 负责项目版本与已发布提交范围；更新说明和安装说明的格式由 `.github/cliff.toml` 管理。
+构建号取工作流计数与已有公开 Release/源码标签最大构建号加一的较大值，在构建前通过源码标签预留，避免失败运行复用构建号。发布标签继续采用 `android-v<versionName>-build.<build>`，APK `versionCode` 继续采用 `10000 + build`，与现有 Android 应用内更新逻辑兼容。iOS 的 `CFBundleShortVersionString` 与 Android 的 `versionName` 一致，`CFBundleVersion` 使用同一构建号。`.github/scripts/release_notes.py` 负责项目版本与已发布提交范围；更新说明和安装说明的格式由 `.github/cliff.toml` 管理。
 
 两端共用 `.github/actions/gradle-setup/action.yml` 初始化 JDK 21 和 Gradle，缓存交由 `gradle/actions/setup-gradle` 管理。iOS 使用标准 `macos-26` runner，明确选择 Xcode 26.6，直接在工作流中调用 `xcodebuild` 构建 `iphoneos` 目标并打包 `Payload/SniffSubPlayer.app`，校验真机平台、arm64 架构、版本号和共享嗅探资源。CI 不需要 Apple 开发者证书或账号；下载的 IPA 需要使用者通过侧载工具签名后安装，不能直接安装。模拟器产物不能作为侧载包使用。
 
@@ -69,6 +69,22 @@ iOS 工程部署目标为 16.0；这一配置不代表已完成最低系统版�
 | Variable | `ANDROID_UPDATES_APP_CLIENT_ID` |
 
 GitHub App 需要安装在专用发布仓库并具有 Contents 写权限。构建后停止 Gradle 守护进程并删除临时签名文件；Kotlin 编译器在 Gradle 进程内执行，避免另留守护进程。
+
+### iOS 签名工具订阅源
+
+固定订阅地址：
+
+```text
+https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest/download/altstore-source.json
+```
+
+源采用 [AltStore JSON 格式](https://faq.altstore.io/developers/make-a-source)，供 SideStore、AltStore Classic、Feather 等签名工具订阅。用户使用自己的 Apple 账号或证书签名；CI 始终发布未签名 IPA，不需要 iOS 签名 secret。
+
+发布作业调用 `.github/scripts/altstore_source.py`，从实际 IPA 读取 Bundle ID、版本、构建号、最低系统版本和隐私权限声明，核对发布元数据并写入真实文件大小及本次提交生成的更新说明。源同时声明 `version` 与 `buildVersion`，即使版本号不变，后续构建也能被识别为更新。当前宿主没有自定义 entitlement；增加 entitlement 时须同步更新脚本的权限清单，增加扩展时脚本会拒绝发布，直到补全扩展权限处理。
+
+源只列当前版本。IPA 和图标使用当前标签下的固定下载链接，避免刷新清单后下载到另一个构建。JSON、图标与双端安装包先上传到同一草稿 Release，全部成功后再公开并设为 Latest；固定订阅地址随之切换，不需要额外提交源文件、部署 Pages 或增加 GitHub App 权限。源首次生效需要发布包含这些附件的版本；手动发布也必须保留源和图标附件。
+
+源内容随发布更新，客户端何时发现新版由签名工具的源刷新和通知机制决定。签名有效期及续签也由用户所选工具和账号管理。
 
 
 ## 构建与验证记录

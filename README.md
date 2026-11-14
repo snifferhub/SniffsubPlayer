@@ -56,7 +56,19 @@ Open the **[latest release](https://github.com/snifferhub/SniffSubPlayer-Release
 
 ### iOS
 
-Open the **[latest release](https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest)** and download `SniffSubPlayer-iOS-unsigned.ipa` from Assets. Sign and install it with a sideloading tool such as [AltStore Classic](https://faq.altstore.io/altstore-classic/your-altstore). The IPA has no developer signature and cannot be installed directly. Apps signed with a free Apple account need periodic refreshing. `SHA256SUMS.txt` contains checksums for both the APK and IPA.
+Requires iOS / iPadOS 16 or later. Use your own signing tool to install the unsigned IPA. Apps signed with a free Apple account need periodic refreshing.
+
+#### Add the source in your signing tool
+
+In SideStore, AltStore Classic, Feather, or another tool that supports AltStore sources, open Sources, add the address below, and install SniffSubPlayer from the source using your own account or certificate:
+
+```text
+https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest/download/altstore-source.json
+```
+
+Each release updates this address to the latest IPA and release notes. Refresh the source in your signing tool to check for updates, then sign and install the new version there. Automatic checks and notifications follow the tool's refresh schedule.
+
+The source becomes available after the first release containing `altstore-source.json` is published. You can also **[download the IPA manually](https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest)**: choose `SniffSubPlayer-iOS-unsigned.ipa` from Assets, then import it into your signing tool. The IPA has no developer signature and cannot be installed directly. `SHA256SUMS.txt` contains checksums for the packages and source files.
 
 You can also open `iosApp/SniffSubPlayer.xcodeproj`, select your own signing team, and build from source. See **[Building iOS locally](docs/DEVELOPMENT.md#ios-本地构建)** in the Chinese development guide for dependencies and build instructions.
 

@@ -19,6 +19,7 @@ footer = """
 
 - Android：下载 `SniffSubPlayer-Android.apk` 安装。
 - iOS：下载 `SniffSubPlayer-iOS-unsigned.ipa`，使用 AltStore Classic 等侧载工具签名安装；IPA 未包含开发者证书，不能直接安装。
+- 签名工具订阅源：https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest/download/altstore-source.json （支持 AltStore 格式的工具可在源内安装和更新）。
 - `SHA256SUMS.txt` 包含两个安装包的 SHA-256 校验值。
 """
 trim = true
