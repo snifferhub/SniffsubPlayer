@@ -31,8 +31,10 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    if args.tag != f"android-v{args.version}-build.{args.build}":
-        raise ValueError("Release tag must match the package version and build")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", args.version) or args.tag != f"v{args.version}":
+        raise ValueError("Release tag must match the semantic package version")
+    if not re.fullmatch(r"[1-9]\d*", args.build):
+        raise ValueError("Release build must be a positive integer")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.repository):
         raise ValueError("Expected an owner/repository name")
 
@@ -68,7 +70,9 @@ def main() -> None:
         "version": args.version,
         "buildVersion": args.build,
         "date": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "localizedDescription": args.notes.read_text(encoding="utf-8").strip(),
+        "localizedDescription": re.sub(
+            r"\s*<!-- sniffsub-release build=\d+ -->\s*", "", args.notes.read_text(encoding="utf-8")
+        ).strip(),
         "downloadURL": f"{asset_url}/{IPA_NAME}",
         "size": args.ipa.stat().st_size,
         "minOSVersion": min_os,

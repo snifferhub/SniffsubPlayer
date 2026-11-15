@@ -23,8 +23,8 @@ data class AppRelease(
     val size: Long,
     val sha256: String,
 ) {
-    val tag: String get() = "android-v$version-build.$build"
-    val displayVersion: String get() = "$version · build $build"
+    val tag: String get() = downloadUrl.removePrefix(DOWNLOAD_ROOT).substringBefore('/')
+    val displayVersion: String get() = version
     val versionCode: Long get() = RELEASE_VERSION_CODE_BASE.toLong() + build
 }
 
@@ -42,27 +42,33 @@ internal fun parseAndroidReleases(body: String): List<AppRelease> {
     val root = Json.parseToJsonElement(body) as? JsonArray ?: error("更新服务器返回了无效数据")
     fun JsonObject.text(key: String) = (get(key) as? JsonPrimitive)?.content.orEmpty()
     val tagPattern = Regex("^android-v(\\d+\\.\\d+\\.\\d+)-build\\.(\\d+)$")
+    val versionTagPattern = Regex("^v(\\d+\\.\\d+\\.\\d+)$")
+    val buildMarker = Regex("<!-- sniffsub-release build=(\\d+) -->")
     return root.mapNotNull { item ->
         val release = item as? JsonObject ?: return@mapNotNull null
         if ((release["draft"] as? JsonPrimitive)?.booleanOrNull != false ||
             (release["prerelease"] as? JsonPrimitive)?.booleanOrNull != false) return@mapNotNull null
-        val match = tagPattern.matchEntire(release.text("tag_name")) ?: return@mapNotNull null
-        val version = match.groupValues[1]
+        val tag = release.text("tag_name")
+        val legacyMatch = tagPattern.matchEntire(tag)
+        val versionMatch = versionTagPattern.matchEntire(tag)
+        val version = (versionMatch ?: legacyMatch)?.groupValues?.get(1) ?: return@mapNotNull null
         if (version.split('.').any { it.toIntOrNull() == null }) return@mapNotNull null
-        val build = match.groupValues[2].toIntOrNull()?.takeIf { it in 1..(Int.MAX_VALUE - RELEASE_VERSION_CODE_BASE) }
+        val buildText = if (legacyMatch != null) legacyMatch.groupValues[2]
+            else buildMarker.find(release.text("body"))?.groupValues?.get(1)
+        val build = buildText?.toIntOrNull()?.takeIf { it in 1..(Int.MAX_VALUE - RELEASE_VERSION_CODE_BASE) }
             ?: return@mapNotNull null
         val asset = (release["assets"] as? JsonArray)?.filterIsInstance<JsonObject>()?.firstOrNull {
             it.text("name") == SIGNED_APK_NAME && it.text("state") == "uploaded"
         } ?: return@mapNotNull null
         val url = asset.text("browser_download_url")
-        if (url != "$DOWNLOAD_ROOT${match.value}/$SIGNED_APK_NAME") return@mapNotNull null
+        if (url != "$DOWNLOAD_ROOT$tag/$SIGNED_APK_NAME") return@mapNotNull null
         val size = (asset["size"] as? JsonPrimitive)?.longOrNull?.takeIf { it in 1..(300L * 1024 * 1024) }
             ?: return@mapNotNull null
         val digest = asset.text("digest").removePrefix("sha256:").lowercase()
         if (!asset.text("digest").startsWith("sha256:") || !Regex("[0-9a-f]{64}").matches(digest)) {
             return@mapNotNull null
         }
-        AppRelease(version, build, release.text("body").take(4_000), url, size, digest)
+        AppRelease(version, build, release.text("body").replace(buildMarker, "").trim().take(4_000), url, size, digest)
     }
 }
 
@@ -78,8 +84,7 @@ class GitHubAppUpdateSource(private val fetcher: HttpFetcher) : AppUpdateSource 
             timeoutMillis = 30_000,
             maximumBytes = 2 * 1024 * 1024,
         ).decodeToString()
-        return parseAndroidReleases(body).maxWithOrNull { first, second ->
-            compareReleaseVersions(first.version, first.build, second.version, second.build)
-        } ?: error("暂未找到带有校验信息的 Android 正式版本，请稍后重试")
+        return parseAndroidReleases(body).maxByOrNull { it.build }
+            ?: error("暂未找到带有校验信息的 Android 正式版本，请稍后重试")
     }
 }

@@ -1,4 +1,4 @@
-"""Resolve synchronized Android/iOS release metadata without changing Android tags."""
+"""Resolve semantic release versions and monotonically increasing package builds."""
 
 import argparse
 import json
@@ -8,7 +8,19 @@ import re
 import subprocess
 
 
-TAG_PATTERN = re.compile(r"android-v(\d+\.\d+\.\d+)-build\.(\d+)")
+LEGACY_TAG_PATTERN = re.compile(r"android-v(\d+\.\d+\.\d+)-build\.(\d+)")
+VERSION_TAG_PATTERN = re.compile(r"v(\d+\.\d+\.\d+)")
+BUILD_MARKER = re.compile(r"<!-- sniffsub-release build=(\d+) -->")
+
+
+def release_metadata(release: dict) -> tuple[str, int] | None:
+    tag = release.get("tag_name", "")
+    if match := LEGACY_TAG_PATTERN.fullmatch(tag):
+        return match[1], int(match[2])
+    if match := VERSION_TAG_PATTERN.fullmatch(tag):
+        if build := BUILD_MARKER.search(release.get("body") or ""):
+            return match[1], int(build[1])
+    return None
 
 
 def git(*args: str) -> str:
@@ -16,21 +28,20 @@ def git(*args: str) -> str:
 
 
 def release_range(releases: list, head: str, current_tag: str) -> str:
-    """Match the app's version ordering; drafts/prereleases/current reruns aren't baselines."""
+    """Use the latest published package build, including the old version series."""
     head_sha = git("rev-parse", "--verify", f"{head}^{{commit}}")
     candidates = []
     for release in releases:
         tag = release.get("tag_name", "")
-        match = TAG_PATTERN.fullmatch(tag)
-        if not match or tag == current_tag or release.get("draft") or release.get("prerelease"):
+        metadata = release_metadata(release)
+        if not metadata or tag == current_tag or release.get("draft") or release.get("prerelease"):
             continue
         if not any(
             asset.get("name") == "SniffSubPlayer-Android.apk" and asset.get("state") == "uploaded"
             for asset in release.get("assets", [])
         ):
             continue
-        version = tuple(int(part) for part in match[1].split("."))
-        candidates.append(((*version, int(match[2])), tag))
+        candidates.append((metadata[1], tag))
     if not candidates:
         # A first release includes the source history, filtered by cliff.toml.
         return head_sha
@@ -42,7 +53,12 @@ def release_range(releases: list, head: str, current_tag: str) -> str:
         raise ValueError(f"Published release tag {tag} is missing from source history") from error
     ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", base_sha, head_sha], check=False)
     if ancestry.returncode == 1:
-        # The initial KMP main imports Android without merging its Git ancestry.
+        # Amending a published commit keeps the common history usable for notes.
+        common = subprocess.run(
+            ["git", "merge-base", base_sha, head_sha], capture_output=True, text=True, check=False
+        )
+        if common.returncode == 0:
+            return f"{common.stdout.strip()}..{head_sha}"
         print(f"::notice::Published release {tag} is on the former Android history; using current branch history")
         return head_sha
     if ancestry.returncode != 0:
@@ -51,27 +67,33 @@ def release_range(releases: list, head: str, current_tag: str) -> str:
 
 def prepare_release(releases: list, head: str, run_number: int) -> dict[str, str]:
     source = Path("app/build.gradle.kts").read_text(encoding="utf-8")
-    match = re.search(r'^\s*versionName = "(\d+\.\d+\.\d+)"', source, re.MULTILINE)
+    match = re.search(r'\.gradleProperty\("releaseVersion"\)\.orElse\("(\d+\.\d+\.\d+)"\)', source)
     if match is None:
-        raise ValueError("Missing semantic versionName in app/build.gradle.kts")
-    version = match[1]
+        raise ValueError("Missing semantic releaseVersion baseline in app/build.gradle.kts")
+    baseline = tuple(map(int, match[1].split(".")))
     # Workflow counters can restart when files change. Reserve past source tags too,
     # so a failed upload or rerun cannot reuse a signed APK's version code.
-    tags = [release.get("tag_name", "") for release in releases]
-    tags.extend(git("tag", "--list", "android-v*-build.*").splitlines())
-    parsed = [match for tag in tags if (match := TAG_PATTERN.fullmatch(tag))]
-    highest_build = max((int(match[2]) for match in parsed), default=0)
+    tags = git("tag", "--list").splitlines()
+    builds = [int(match[2]) for tag in tags if (match := LEGACY_TAG_PATTERN.fullmatch(tag))]
+    builds.extend(metadata[1] for release in releases if (metadata := release_metadata(release)))
+    highest_build = max(builds, default=0)
     build = max(run_number, highest_build + 1)
     if not 1 <= build <= 2_147_483_647 - 10_000:
         raise ValueError("Android release build number is out of range")
-    current_version = tuple(map(int, version.split(".")))
-    if any(tuple(map(int, match[1].split("."))) > current_version for match in parsed):
-        raise ValueError("versionName must not regress behind an existing Android release")
-    tag = f"android-v{version}-build.{build}"
+    # Legacy 1.1.0-build tags only reserve internal build numbers. The new public
+    # version series intentionally starts at 1.0.0 and advances its patch number.
+    version_tags = tags + [release.get("tag_name", "") for release in releases]
+    versions = [tuple(map(int, match[1].split("."))) for tag in version_tags
+                if (match := VERSION_TAG_PATTERN.fullmatch(tag))]
+    latest = max(versions, default=None)
+    resolved = (latest[0], latest[1], latest[2] + 1) if latest and latest >= baseline else baseline
+    version = ".".join(map(str, resolved))
+    tag = f"v{version}"
     return {
         "version": version,
         "build": str(build),
         "tag": tag,
+        "build_tag": f"android-v{version}-build.{build}",
         "range": release_range(releases, head, tag),
     }
 

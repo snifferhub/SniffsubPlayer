@@ -20,6 +20,8 @@ plugins {
 
 val releaseBuildNumber = providers.gradleProperty("releaseBuildNumber").orElse("0").get().toInt()
 require(releaseBuildNumber in 0..(Int.MAX_VALUE - 10_000))
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.0").get()
+require(Regex("\\d+\\.\\d+\\.\\d+").matches(releaseVersion))
 
 android {
     namespace = "com.sniffsub.sniff_sub_player"
@@ -30,7 +32,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = if (releaseBuildNumber > 0) 10_000 + releaseBuildNumber else 4
-        versionName = "1.1.0"
+        versionName = releaseVersion
         buildConfigField("int", "RELEASE_BUILD_NUMBER", releaseBuildNumber.toString())
 
         ndk {

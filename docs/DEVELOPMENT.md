@@ -56,7 +56,7 @@ iOS 工程部署目标为 16.0；这一配置不代表已完成最低系统版�
 
 安装包保存为保留 7 天的 Actions artifacts，并通过已有 GitHub App 上传到专用公开仓库 `snifferhub/SniffSubPlayer-Releases` 的同一个 GitHub Release：`SniffSubPlayer-Android.apk`、`SniffSubPlayer-iOS-unsigned.ipa`、`altstore-source.json`、`icon.png` 和这些文件的 `SHA256SUMS.txt`。先上传为草稿，所有文件上传完成后再公开并设为 Latest；任一平台构建或源生成失败时不发布。源码仓库仅新增对应版本标签，用于追踪后续更新说明的提交范围，不重复保存安装包。
 
-构建号取工作流计数与已有公开 Release/源码标签最大构建号加一的较大值，在构建前通过源码标签预留，避免失败运行复用构建号。发布标签继续采用 `android-v<versionName>-build.<build>`，APK `versionCode` 继续采用 `10000 + build`，与现有 Android 应用内更新逻辑兼容。iOS 的 `CFBundleShortVersionString` 与 Android 的 `versionName` 一致，`CFBundleVersion` 使用同一构建号。`.github/scripts/release_notes.py` 负责项目版本与已发布提交范围；更新说明和安装说明的格式由 `.github/cliff.toml` 管理。
+公开版本从 `1.0.0` 开始，每次发布自动递增修订号（`1.0.1`、`1.0.2`），公开标签采用 `v<version>`，Release 标题和应用内只显示语义版本。`app/build.gradle.kts` 的 `releaseVersion` 默认值是版本下限；需要升级主 / 次版本时提高该值，CI 将解析后的版本同时传给 Android 和 iOS。内部构建号仍取工作流计数与历史最大构建号加一的较大值，并通过源码仓库的 `android-v<version>-build.<build>` 标签预留；这些内部标签保留，避免删除旧 Release 后复用版本编号。APK `versionCode` 继续采用 `10000 + build`，iOS `CFBundleVersion` 使用同一构建号。公开 Release 的隐藏 HTML 注释保存内部构建号，新版 Android 同时识别新旧标签并以内部构建号判断更新；界面和签名工具中的更新说明会移除该注释。旧版 Android 不能识别新的公开标签，首次迁移需从 Releases 手动下载安装，保留签名、应用 ID 和更大的版本编号以支持覆盖安装。`.github/scripts/release_notes.py` 负责项目版本与已发布提交范围；更新说明和安装说明的格式由 `.github/cliff.toml` 管理。
 
 两端共用 `.github/actions/gradle-setup/action.yml` 初始化 JDK 21 和 Gradle，缓存交由 `gradle/actions/setup-gradle` 管理。iOS 使用标准 `macos-26` runner，明确选择 Xcode 26.6，直接在工作流中调用 `xcodebuild` 构建 `iphoneos` 目标并打包 `Payload/SniffSubPlayer.app`，校验真机平台、arm64 架构、版本号和共享嗅探资源。CI 不需要 Apple 开发者证书或账号；下载的 IPA 需要使用者通过侧载工具签名后安装，不能直接安装。模拟器产物不能作为侧载包使用。
 
@@ -80,7 +80,7 @@ https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest/download/a
 
 源采用 [AltStore JSON 格式](https://faq.altstore.io/developers/make-a-source)，供 SideStore、AltStore Classic、Feather 等签名工具订阅。用户使用自己的 Apple 账号或证书签名；CI 始终发布未签名 IPA，不需要 iOS 签名 secret。
 
-发布作业调用 `.github/scripts/altstore_source.py`，从实际 IPA 读取 Bundle ID、版本、构建号、最低系统版本和隐私权限声明，核对发布元数据并写入真实文件大小及本次提交生成的更新说明。源同时声明 `version` 与 `buildVersion`，即使版本号不变，后续构建也能被识别为更新。当前宿主没有自定义 entitlement；增加 entitlement 时须同步更新脚本的权限清单，增加扩展时脚本会拒绝发布，直到补全扩展权限处理。
+发布作业调用 `.github/scripts/altstore_source.py`，从实际 IPA 读取 Bundle ID、版本、构建号、最低系统版本和隐私权限声明，核对发布元数据并写入真实文件大小及本次提交生成的更新说明。源同时声明递增的语义 `version` 与内部 `buildVersion`，并使用对应 `v<version>` 发布标签的下载地址。当前宿主没有自定义 entitlement；增加 entitlement 时须同步更新脚本的权限清单，增加扩展时脚本会拒绝发布，直到补全扩展权限处理。
 
 源只列当前版本。IPA 和图标使用当前标签下的固定下载链接，避免刷新清单后下载到另一个构建。JSON、图标与双端安装包先上传到同一草稿 Release，全部成功后再公开并设为 Latest；固定订阅地址随之切换，不需要额外提交源文件、部署 Pages 或增加 GitHub App 权限。源首次生效需要发布包含这些附件的版本；手动发布也必须保留源和图标附件。
 
@@ -94,7 +94,7 @@ https://github.com/snifferhub/SniffSubPlayer-Releases/releases/latest/download/a
 GitHub CI 中的 Android 编译入口（工作流注入签名环境变量和递增的构建号）：
 
 ```sh
-./gradlew :app:assembleRelease -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
+./gradlew :app:assembleRelease -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" -PreleaseVersion="$APP_VERSION" \
   -Pkotlin.compiler.execution.strategy=in-process --no-daemon
 ```
 

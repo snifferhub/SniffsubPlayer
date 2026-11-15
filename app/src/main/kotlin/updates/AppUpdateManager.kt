@@ -63,7 +63,7 @@ class AppUpdateManager(
 
     init {
         store.read()?.let { pending ->
-            if (compareReleaseVersions(pending.release.version, pending.release.build, currentVersion, currentBuild) <= 0) {
+            if (!isNewer(pending.release)) {
                 operation = scope.launch {
                     runCatching { downloader.remove(pending.downloadId) }
                     store.clear()
@@ -83,7 +83,7 @@ class AppUpdateManager(
                 val release = source.latest()
                 mutableState.value = AppUpdateState(
                     stage = when {
-                        compareReleaseVersions(release.version, release.build, currentVersion, currentBuild) <= 0 -> UpdateStage.CURRENT
+                        !isNewer(release) -> UpdateStage.CURRENT
                         release == verifiedRelease -> UpdateStage.READY
                         else -> UpdateStage.AVAILABLE
                     },
@@ -95,6 +95,10 @@ class AppUpdateManager(
             }
         }
     }
+
+    private fun isNewer(release: AppRelease): Boolean =
+        if (currentBuild > 0) release.build > currentBuild
+        else compareReleaseVersions(release.version, release.build, currentVersion, currentBuild) > 0
 
     fun download() {
         if (operation?.isActive == true) return

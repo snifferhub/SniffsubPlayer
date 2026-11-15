@@ -53,11 +53,14 @@ jobs:
             --head "$GITHUB_SHA" \
             --run-number "$GITHUB_RUN_NUMBER"
 
-      - name: Reserve release build number
+      - name: Reserve package build and semantic version
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          BUILD_TAG: ${{ steps.release.outputs.build_tag }}
         run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$BUILD_TAG" -f sha="$GITHUB_SHA" > /dev/null
           gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
             -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" > /dev/null
 
@@ -69,6 +72,12 @@ jobs:
           args: ${{ steps.release.outputs.range }}
         env:
           OUTPUT: ${{ runner.temp }}/release-notes.md
+
+      - name: Attach internal package metadata
+        env:
+          RELEASE_BUILD_NUMBER: ${{ steps.release.outputs.build }}
+        run: |
+          printf '\n<!-- sniffsub-release build=%s -->\n' "$RELEASE_BUILD_NUMBER" >> "$RUNNER_TEMP/release-notes.md"
 
       - name: Share release notes with publisher
         uses: actions/upload-artifact@v7
@@ -115,9 +124,10 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           RELEASE_BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           ./gradlew :app:assembleRelease \
-            -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER"
+            -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" -PreleaseVersion="$APP_VERSION"
 
       - name: Stop build daemons and remove signing material
         if: always() && steps.gradle.outcome == 'success'
@@ -281,7 +291,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" \
               --repo "$PUBLIC_RELEASE_REPOSITORY" --target main --draft \
-              --title "SniffSubPlayer $APP_VERSION (build $RELEASE_BUILD_NUMBER)" \
+              --title "SniffSubPlayer $APP_VERSION" \
               --notes-file dist/release-notes.md
           fi
           gh release upload "$RELEASE_TAG" \
