@@ -316,7 +316,10 @@ struct AppleBrowserScreen: View {
                     } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "play.circle").font(.title2)
-                            Text(candidate.url).font(.subheadline).lineLimit(3).foregroundStyle(.primary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                MediaKindBadge(kind: candidate.kind)
+                                Text(candidate.url).font(.subheadline).lineLimit(3).foregroundStyle(.primary)
+                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -344,6 +347,38 @@ struct AppleBrowserScreen: View {
         guard !input.isEmpty else { return }
         model.host.loadAddress(address: input)
         addressFocused = false
+    }
+}
+
+private struct MediaKindBadge: View {
+    let kind: MediaKind
+
+    private var color: Color {
+        // Keep resource badges aligned with the shared Compose candidate list.
+        let rgb: UInt32
+        switch kind {
+        case .hls: rgb = 0x34C759
+        case .mp4: rgb = 0x007AFF
+        case .dash: rgb = 0xAF52DE
+        case .segment: rgb = 0xFF9500
+        case .blob: rgb = 0xFF2D55
+        default: rgb = 0x8E8E93
+        }
+        return Color(
+            red: Double((rgb >> 16) & 0xFF) / 255,
+            green: Double((rgb >> 8) & 0xFF) / 255,
+            blue: Double(rgb & 0xFF) / 255
+        )
+    }
+
+    var body: some View {
+        Text(kind.name)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+            .fixedSize()
     }
 }
 
