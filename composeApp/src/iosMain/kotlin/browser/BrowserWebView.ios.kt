@@ -91,6 +91,7 @@ internal class IosWebViewController(
             }
             val created = WKWebView(frame = CGRectZero.readValue(), configuration = configuration).apply {
                 navigationDelegate = navigation
+                UIDelegate = navigation
                 allowsBackForwardNavigationGestures = true
                 customUserAgent = initialUserAgent
                 translatesAutoresizingMaskIntoConstraints = false
@@ -158,6 +159,7 @@ internal class IosWebViewController(
         delegate?.released = true
         view?.let {
             it.navigationDelegate = null
+            it.UIDelegate = null
             it.configuration.userContentController.removeScriptMessageHandlerForName(BRIDGE)
             it.stopLoading()
             // Evaluating JS in a terminated view can start another content process during cleanup.
@@ -209,9 +211,21 @@ internal class IosWebViewController(
 private class BrowserDelegate(
     private val session: BrowserSession,
     private val controller: IosWebViewController,
-) : NSObject(), WKNavigationDelegateProtocol, WKScriptMessageHandlerProtocol {
+) : NSObject(), WKNavigationDelegateProtocol, WKUIDelegateProtocol, WKScriptMessageHandlerProtocol {
     var active = false
     var released = false
+
+    override fun webView(
+        webView: WKWebView,
+        createWebViewWithConfiguration: WKWebViewConfiguration,
+        forNavigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures,
+    ): WKWebView? {
+        if (released || forNavigationAction.targetFrame != null) return null
+        controller.prepareForUserNavigation()
+        webView.loadRequest(forNavigationAction.request)
+        return null
+    }
 
     override fun userContentController(userContentController: WKUserContentController, didReceiveScriptMessage: WKScriptMessage) {
         if (!active || released || !didReceiveScriptMessage.frameInfo.mainFrame) return

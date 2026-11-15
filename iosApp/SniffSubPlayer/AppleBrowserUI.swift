@@ -340,9 +340,10 @@ struct AppleBrowserScreen: View {
     }
 
     private func submitAddress() {
-        guard !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let input = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return }
+        model.host.loadAddress(address: input)
         addressFocused = false
-        model.host.loadAddress(address: address)
     }
 }
 
