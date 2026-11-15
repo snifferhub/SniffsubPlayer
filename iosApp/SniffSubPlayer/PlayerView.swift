@@ -1,5 +1,6 @@
 import ComposeApp
 import AVFoundation
+import MediaPlayer
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -58,6 +59,7 @@ struct PlayerView: View {
     @State private var panStartTime = 0.0
     @State private var brightnessStart = UIScreen.main.brightness
     @State private var volumeStart: Float = 1
+    @State private var systemVolume = PlayerSystemVolumeControl()
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -65,6 +67,7 @@ struct PlayerView: View {
 
             PlayerLayerView(
                 player: player,
+                systemVolume: systemVolume,
                 onSingleTap: toggleControlsVisibility,
                 onDoubleTap: handleDoubleTap,
                 onPan: handlePan,
@@ -850,8 +853,10 @@ struct PlayerView: View {
         case .began(let control):
             seekFeedbackTask?.cancel()
             brightnessStart = UIScreen.main.brightness
-            volumeStart = player.volume
+            volumeStart = systemVolume.volume
             seekFeedbackIcon = control == .brightness ? "sun.max.fill" : "speaker.wave.2.fill"
+            let value = control == .brightness ? brightnessStart : Double(volumeStart)
+            seekFeedbackText = "\(Int((value * 100).rounded()))%"
             showSeekFeedback = true
 
         case .changed(let control, let progress):
@@ -861,8 +866,7 @@ struct PlayerView: View {
                 value = min(1, max(0, brightnessStart + Double(progress)))
                 UIScreen.main.brightness = value
             case .volume:
-                value = min(1, max(0, Double(volumeStart) + Double(progress)))
-                player.volume = Float(value)
+                value = Double(systemVolume.setVolume(volumeStart + Float(progress)))
             }
             seekFeedbackText = "\(Int((value * 100).rounded()))%"
 
@@ -1108,8 +1112,34 @@ enum PlayerVerticalPanEvent {
     case cancelled
 }
 
+@MainActor
+final class PlayerSystemVolumeControl {
+    // Keep the native control mounted for its system-volume connection while
+    // the player presents its existing gesture feedback instead of a slider.
+    let view = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 200, height: 44))
+
+    init() {
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+    }
+
+    var volume: Float { AVAudioSession.sharedInstance().outputVolume }
+
+    @discardableResult
+    func setVolume(_ value: Float) -> Float {
+        guard view.window != nil,
+              let slider = view.subviews.compactMap({ $0 as? UISlider }).first else {
+            return volume
+        }
+        slider.setValue(min(1, max(0, value)), animated: false)
+        slider.sendActions(for: .valueChanged)
+        return slider.value
+    }
+}
+
 struct PlayerLayerView: UIViewRepresentable {
     let player: AVPlayer
+    let systemVolume: PlayerSystemVolumeControl
     let onSingleTap: () -> Void
     let onDoubleTap: (PlayerSeekDirection) -> Void
     let onPan: (PlayerPanEvent) -> Void
@@ -1131,6 +1161,7 @@ struct PlayerLayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> PlayerLayerContainerView {
         let view = PlayerLayerContainerView()
         view.playerLayer.player = player
+        view.addSubview(systemVolume.view)
 
         let singleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSingleTap))
         let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
