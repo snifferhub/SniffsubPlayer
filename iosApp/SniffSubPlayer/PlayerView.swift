@@ -53,7 +53,7 @@ struct PlayerView: View {
     @State private var showControls = true
     @State private var hideControlsTask: Task<Void, Never>?
     @State private var seekFeedbackText = ""
-    @State private var seekFeedbackIcon = "goforward.10"
+    @State private var seekFeedbackIcon = "goforward.15"
     @State private var showSeekFeedback = false
     @State private var seekFeedbackTask: Task<Void, Never>?
     @State private var panStartTime = 0.0
@@ -293,22 +293,24 @@ struct PlayerView: View {
             }
 
             HStack(spacing: 42) {
-                playerControlButton(systemName: "gobackward.10", size: 26) {
+                playerControlButton(systemName: "gobackward.15", size: 26) {
                     keepControlsVisibleForInteraction()
-                    seekBy(-10)
+                    seekBy(-15)
                 }
                 .disabled(playbackRange == nil)
+                .accessibilityLabel("后退 15 秒")
 
                 playerControlButton(systemName: wantsPlayback ? "pause.fill" : "play.fill", size: 31, prominent: true) {
                     keepControlsVisibleForInteraction()
                     togglePlay()
                 }
 
-                playerControlButton(systemName: "goforward.10", size: 26) {
+                playerControlButton(systemName: "goforward.15", size: 26) {
                     keepControlsVisibleForInteraction()
-                    seekBy(10)
+                    seekBy(15)
                 }
                 .disabled(playbackRange == nil)
+                .accessibilityLabel("快进 15 秒")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -778,13 +780,13 @@ struct PlayerView: View {
 
     private func handleDoubleTap(_ direction: PlayerSeekDirection) {
         guard playbackRange != nil else { return }
-        let delta: TimeInterval = direction == .forward ? 10 : -10
+        let delta: TimeInterval = direction == .forward ? 15 : -15
         seekBy(delta)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
         seekFeedbackTask?.cancel()
-        seekFeedbackText = direction == .forward ? "快进 10 秒" : "后退 10 秒"
-        seekFeedbackIcon = direction == .forward ? "goforward.10" : "gobackward.10"
+        seekFeedbackText = direction == .forward ? "快进 15 秒" : "后退 15 秒"
+        seekFeedbackIcon = direction == .forward ? "goforward.15" : "gobackward.15"
         withAnimation(.easeOut(duration: 0.16)) {
             showSeekFeedback = true
         }
@@ -1058,14 +1060,52 @@ struct PlayerProgressBar: View {
     let range: ClosedRange<Double>
     let accentColor: Color
     let onEditingChanged: (Bool) -> Void
+    @Environment(\.isEnabled) private var isEnabled
+    @GestureState private var isDragging = false
+    @State private var isEditing = false
 
     var body: some View {
-        Slider(value: $value, in: range, onEditingChanged: onEditingChanged)
-        .tint(accentColor)
-        .frame(minHeight: 44)
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.3))
+                Capsule()
+                    .fill(accentColor)
+                    .frame(width: geometry.size.width * progressFraction)
+            }
+            .frame(height: isEditing ? 6 : 3)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .updating($isDragging) { _, dragging, _ in dragging = true }
+                    .onChanged { gesture in
+                        guard isEnabled, geometry.size.width > 0 else { return }
+                        if !isEditing {
+                            isEditing = true
+                            onEditingChanged(true)
+                        }
+                        let fraction = min(1, max(0, gesture.location.x / geometry.size.width))
+                        value = range.lowerBound + Double(fraction) * (range.upperBound - range.lowerBound)
+                    }
+                    .onEnded { _ in finishEditing() },
+                including: isEnabled ? .all : .none
+            )
+        }
+        .frame(height: 44)
+        .animation(.easeOut(duration: 0.15), value: isEditing)
+        .opacity(isEnabled ? 1 : 0.4)
+        .onChange(of: isDragging) { dragging in
+            if !dragging { finishEditing() }
+        }
+        .onChange(of: isEnabled) { enabled in
+            if !enabled { finishEditing() }
+        }
+        .onDisappear { finishEditing() }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("播放进度")
         .accessibilityValue("\(Int(progressFraction * 100))%")
         .accessibilityAdjustableAction { direction in
+            guard isEnabled else { return }
             let step = (range.upperBound - range.lowerBound) * 0.05
             onEditingChanged(true)
             switch direction {
@@ -1078,6 +1118,12 @@ struct PlayerProgressBar: View {
             }
             onEditingChanged(false)
         }
+    }
+
+    private func finishEditing() {
+        guard isEditing else { return }
+        isEditing = false
+        onEditingChanged(false)
     }
 
     private var progressFraction: CGFloat {

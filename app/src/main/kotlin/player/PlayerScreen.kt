@@ -24,10 +24,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,15 +46,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -152,7 +154,7 @@ fun PlayerScreen(
         val target = clampSeekPosition(currentPositionMs + deltaMs, durationMs)
         player.seekTo(target)
         currentPositionMs = target
-        feedbackText = if (deltaMs < 0) "后退 10 秒" else "前进 10 秒"
+        feedbackText = if (deltaMs < 0) "后退 15 秒" else "前进 15 秒"
         feedbackRevision += 1
         keepControlsVisible()
     }
@@ -324,7 +326,7 @@ fun PlayerScreen(
                 controlsVisible = !controlsVisible
                 if (controlsVisible) interactionRevision += 1
             },
-            onDoubleTap = { forward -> seekBy(if (forward) 10_000L else -10_000L) },
+            onDoubleTap = { forward -> seekBy(if (forward) 15_000L else -15_000L) },
             onSeekStart = {
                 clearFeedback()
                 val seekDuration = player.duration
@@ -421,7 +423,7 @@ fun PlayerScreen(
                     keepControlsVisible()
                     showSubtitleSearch = true
                 },
-                onSeekBack = { seekBy(-10_000L) },
+                onSeekBack = { seekBy(-15_000L) },
                 onTogglePlayback = {
                     if (player.isPlaying) {
                         player.pause()
@@ -432,7 +434,7 @@ fun PlayerScreen(
                     isPlaying = player.isPlaying
                     keepControlsVisible()
                 },
-                onSeekForward = { seekBy(10_000L) },
+                onSeekForward = { seekBy(15_000L) },
                 onScrub = {
                     clearFeedback()
                     scrubPositionMs = it
@@ -580,11 +582,12 @@ private fun PlayerControls(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             PlayerControlButton(
-                icon = Icons.Default.Replay10,
-                contentDescription = "后退 10 秒",
+                icon = Icons.Default.Replay,
+                contentDescription = "后退 15 秒",
                 onClick = onSeekBack,
                 size = 58.dp,
                 iconSize = 30.dp,
+                centerLabel = "15",
             )
             PlayerControlButton(
                 icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -594,11 +597,13 @@ private fun PlayerControls(
                 iconSize = 40.dp,
             )
             PlayerControlButton(
-                icon = Icons.Default.Forward10,
-                contentDescription = "前进 10 秒",
+                icon = Icons.Default.Replay,
+                contentDescription = "前进 15 秒",
                 onClick = onSeekForward,
                 size = 58.dp,
                 iconSize = 30.dp,
+                centerLabel = "15",
+                mirrorIcon = true,
             )
         }
 
@@ -659,6 +664,8 @@ private fun PlayerControlButton(
     onClick: () -> Unit,
     size: Dp,
     iconSize: Dp,
+    centerLabel: String? = null,
+    mirrorIcon: Boolean = false,
 ) {
     Surface(
         onClick = onClick,
@@ -673,8 +680,19 @@ private fun PlayerControlButton(
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
-                modifier = Modifier.size(iconSize),
+                modifier = Modifier
+                    .size(iconSize)
+                    .scale(scaleX = if (mirrorIcon) -1f else 1f, scaleY = 1f),
             )
+            if (centerLabel != null) {
+                Text(
+                    text = centerLabel,
+                    fontSize = (iconSize.value * 0.32f).sp,
+                    lineHeight = (iconSize.value * 0.32f).sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 4.dp).clearAndSetSemantics {},
+                )
+            }
         }
     }
 }
