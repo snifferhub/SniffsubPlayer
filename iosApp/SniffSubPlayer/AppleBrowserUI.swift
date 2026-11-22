@@ -500,11 +500,25 @@ private struct AppleAdBlockScreen: View {
             }
             Section("订阅") {
                 ForEach(manager.subscriptions) { subscription in
-                    Toggle(subscription.name, isOn: Binding(
+                    Toggle(isOn: Binding(
                         get: { manager.subscriptions.first { $0.id == subscription.id }?.isEnabled ?? false },
                         set: { manager.setSubscriptionEnabled(id: subscription.id, enabled: $0) }
-                    ))
+                    )) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(subscription.name)
+                            Text(verbatim: subscription.urlString)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     .contextMenu {
+                        Button {
+                            UIPasteboard.general.string = subscription.urlString
+                        } label: {
+                            Label("复制链接", systemImage: "doc.on.doc")
+                        }
                         ShareLink(item: subscription.urlString) { Label("分享链接", systemImage: "square.and.arrow.up") }
                     }
                 }

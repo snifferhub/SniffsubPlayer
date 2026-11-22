@@ -53,7 +53,7 @@ final class AdBlockManager: ObservableObject {
         static let configurationNeedsUpdate = "SniffSubPlayer.adBlock.configurationNeedsUpdate"
     }
 
-    private static let ruleListIdentifierPrefix = "SniffSubPlayer.AdBlock."
+    private static let ruleListIdentifierPrefix = "SniffSubPlayer.AdBlock.v2."
     private static let automaticUpdateInterval: TimeInterval = 24 * 60 * 60
     private static let maximumDownloadSize = 12 * 1024 * 1024
 
@@ -109,11 +109,16 @@ final class AdBlockManager: ObservableObject {
         safariRulesCount = defaults.integer(forKey: StorageKey.safariRulesCount)
         conversionErrorsCount = defaults.integer(forKey: StorageKey.conversionErrorsCount)
         discardedRulesCount = defaults.integer(forKey: StorageKey.discardedRulesCount)
-        configurationNeedsUpdate = defaults.bool(forKey: StorageKey.configurationNeedsUpdate)
+        configurationNeedsUpdate = defaults.bool(forKey: StorageKey.configurationNeedsUpdate) || needsRuleMigration
 
-        if activeRuleListIdentifier != nil {
+        if activeRuleListIdentifier != nil, !needsRuleMigration {
             updateState = .active
         }
+    }
+
+    private var needsRuleMigration: Bool {
+        guard let activeRuleListIdentifier else { return false }
+        return !activeRuleListIdentifier.hasPrefix(Self.ruleListIdentifierPrefix)
     }
 
     var enabledSubscriptionsCount: Int {
@@ -145,7 +150,8 @@ final class AdBlockManager: ObservableObject {
         defaults.set(enabled, forKey: StorageKey.isEnabled)
         ruleRevision += 1
 
-        if enabled, activeRuleListIdentifier == nil, subscriptions.contains(where: \.isEnabled) {
+        if enabled, (activeRuleListIdentifier == nil || needsRuleMigration),
+           subscriptions.contains(where: \.isEnabled) {
             Task { await updateRules(force: false) }
         }
     }
@@ -201,7 +207,12 @@ final class AdBlockManager: ObservableObject {
     }
 
     func refreshIfNeeded() async {
-        guard isEnabled, automaticUpdatesEnabled, !subscriptions.isEmpty else { return }
+        guard isEnabled, subscriptions.contains(where: \.isEnabled) else { return }
+        if needsRuleMigration {
+            await updateRules(force: false)
+            return
+        }
+        guard automaticUpdatesEnabled else { return }
         if let lastCheckedAt,
            Date().timeIntervalSince(lastCheckedAt) < Self.automaticUpdateInterval,
            activeRuleListIdentifier != nil,
@@ -224,9 +235,16 @@ final class AdBlockManager: ObservableObject {
 
         do {
             var downloadedRules: [String] = []
-            var contentChanged = activeRuleListIdentifier == nil || configurationNeedsUpdate
+            let rebuildFromCache = needsRuleMigration && !force
+            var contentChanged = activeRuleListIdentifier == nil || configurationNeedsUpdate || needsRuleMigration
 
             for subscription in enabledSubscriptions {
+                if rebuildFromCache,
+                   let data = try? Data(contentsOf: cacheFileURL(for: subscription.id)),
+                   let text = try? decodeRules(data, response: nil) {
+                    downloadedRules.append(text)
+                    continue
+                }
                 let result = try await download(subscription: subscription, force: force)
                 downloadedRules.append(result.text)
                 contentChanged = contentChanged || result.changed
@@ -235,8 +253,10 @@ final class AdBlockManager: ObservableObject {
                 }
             }
 
-            lastCheckedAt = Date()
-            defaults.set(lastCheckedAt, forKey: StorageKey.lastCheckedAt)
+            if !rebuildFromCache {
+                lastCheckedAt = Date()
+                defaults.set(lastCheckedAt, forKey: StorageKey.lastCheckedAt)
+            }
 
             if !contentChanged, activeRuleListIdentifier != nil {
                 updateState = .active
@@ -276,7 +296,7 @@ final class AdBlockManager: ObservableObject {
     ) {
         contentController.removeAllContentRuleLists()
 
-        guard isEnabled, let identifier = activeRuleListIdentifier else {
+        guard isEnabled, !needsRuleMigration, let identifier = activeRuleListIdentifier else {
             completion()
             return
         }
@@ -370,31 +390,88 @@ final class AdBlockManager: ObservableObject {
 
     private func convert(rulesText: String) async throws -> ConvertedRules {
         let text = rulesText
-        let result = await Task.detached(priority: .utility) {
+        let result = try await Task.detached(priority: .utility) {
             var contiguousText = text
             contiguousText.makeContiguousUTF8()
             let lines = contiguousText.split(whereSeparator: \.isNewline).map(String.init)
+            let safariVersion = SafariVersion.autodetect()
             let conversion = ContentBlockerConverter().convertArray(
                 rules: lines,
-                safariVersion: SafariVersion.autodetect(),
+                safariVersion: safariVersion,
                 advancedBlocking: false,
                 maxJsonSizeBytes: nil,
                 progress: nil
             )
 
+            guard conversion.safariRulesCount > 0 else { throw AdBlockError.noConvertibleRules }
+            let rules = try JSONDecoder().decode([BlockerEntry].self, from: Data(conversion.safariRulesJSON.utf8))
+            let adjusted = Self.rulesProtectingMainFrame(rules, safariVersion: safariVersion)
+            guard !adjusted.rules.isEmpty else { throw AdBlockError.noConvertibleRules }
+
             return ConvertedRules(
-                json: conversion.safariRulesJSON,
+                json: String(decoding: try JSONEncoder().encode(adjusted.rules), as: UTF8.self),
                 sourceRulesCount: conversion.sourceRulesCount,
-                safariRulesCount: conversion.safariRulesCount,
+                safariRulesCount: adjusted.rules.count,
                 errorsCount: conversion.errorsCount,
-                discardedRulesCount: conversion.discardedSafariRules
+                discardedRulesCount: conversion.discardedSafariRules + adjusted.discarded
             )
         }.value
 
-        guard result.sourceRulesCount > 0, result.safariRulesCount > 0 else {
-            throw AdBlockError.noConvertibleRules
-        }
         return result
+    }
+
+    private nonisolated static func rulesProtectingMainFrame(
+        _ rules: [BlockerEntry],
+        safariVersion: SafariVersion
+    ) -> (rules: [BlockerEntry], discarded: Int) {
+        let subresourceTypes = [
+            "image", "style-sheet", "script", "font", "raw", "svg-document", "media",
+            "popup", "ping", "fetch", "websocket", "csp-report", "other"
+        ]
+        let documentTypes = ["document", "top-document"]
+        var adjusted: [BlockerEntry] = []
+        adjusted.reserveCapacity(rules.count)
+        var extraRuleSlots = max(0, safariVersion.rulesLimit - rules.count)
+        var discarded = 0
+
+        for rule in rules {
+            if rule.action.type != "block" || rule.trigger.loadContext == ["child-frame"] {
+                adjusted.append(rule)
+                continue
+            }
+
+            let types = rule.trigger.resourceType ?? subresourceTypes + ["document"]
+            var remainingTypes = types.filter { !documentTypes.contains($0) }
+            let canBlockChildDocument = types.contains("document") &&
+                (rule.trigger.loadContext?.contains("child-frame") ?? true)
+            let needsChildFrameRule = canBlockChildDocument && !safariVersion.isSafari26orGreater()
+            if canBlockChildDocument && !needsChildFrameRule && !remainingTypes.contains("child-document") {
+                remainingTypes.append("child-document")
+            }
+
+            if !remainingTypes.isEmpty {
+                var resourceRule = rule
+                resourceRule.trigger.resourceType = remainingTypes
+                adjusted.append(resourceRule)
+            }
+
+            if needsChildFrameRule {
+                // Older WebKit needs a separate rule to restrict document loads to iframes.
+                guard remainingTypes.isEmpty || extraRuleSlots > 0 else {
+                    discarded += 1
+                    continue
+                }
+                var childFrameRule = rule
+                childFrameRule.trigger.resourceType = ["document"]
+                childFrameRule.trigger.loadContext = ["child-frame"]
+                adjusted.append(childFrameRule)
+                if !remainingTypes.isEmpty { extraRuleSlots -= 1 }
+            } else if remainingTypes.isEmpty {
+                extraRuleSlots += 1
+                discarded += 1
+            }
+        }
+        return (adjusted, discarded)
     }
 
     private func compile(json: String, identifier: String) async throws -> WKContentRuleList {
