@@ -407,6 +407,11 @@ struct AppleSettingsScreen: View {
                     ColorPicker("进度条颜色", selection: playerColor, supportsOpacity: false)
                     Button("恢复默认颜色") { model.host.resetPlayerAccent() }
                 }
+                Section("应用") {
+                    NavigationLink {
+                        AppleAboutScreen()
+                    } label: { Label("关于 SniffSubPlayer", systemImage: "info.circle") }
+                }
             }
             .navigationTitle("设置")
         }
@@ -444,6 +449,47 @@ struct AppleSettingsScreen: View {
                 (Int64((green * 255).rounded()) << 8) | Int64((blue * 255).rounded())
             model.host.setPlayerAccent(value: rgb)
         })
+    }
+}
+
+private struct AppleAboutScreen: View {
+    private let info = AboutInfo.shared
+    private let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("版本", value: version)
+                aboutLink("源代码", address: info.sourceUrl)
+                aboutLink("版本发布", address: info.releasesUrl)
+                aboutLink("开源许可", address: info.licenseUrl, value: info.licenseName)
+            }
+            Section("开源项目") {
+                ForEach(info.iosProjects, id: \.name) { project in
+                    aboutLink(project.name, address: project.url)
+                }
+            }
+        }
+        .navigationTitle("关于 SniffSubPlayer")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func aboutLink(_ title: String, address: String, value: String? = nil) -> some View {
+        if let destination = URL(string: address) {
+            Link(destination: destination) {
+                HStack {
+                    Text(title)
+                    Spacer()
+                    if let value {
+                        Text(value).foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "arrow.up.right")
+                        .font(.footnote)
+                        .accessibilityHidden(true)
+                }
+            }
+        }
     }
 }
 

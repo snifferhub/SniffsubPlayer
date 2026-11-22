@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
@@ -94,6 +95,7 @@ data class SettingsActions(
     val onOpenBookmarks: () -> Unit,
     val onOpenAdBlock: () -> Unit,
     val onCheckForUpdates: () -> Unit = {},
+    val onOpenAbout: (() -> Unit)? = null,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -171,14 +173,24 @@ fun SettingsScreen(
                     modifier = Modifier.testTag("ad_block_row"),
                 )
             }
-            if (showAppUpdates) SettingsSection(title = "应用") {
-                SettingsRow(
-                    label = "检查更新",
-                    value = updateSummary,
-                    leading = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },
-                    onClick = actions.onCheckForUpdates,
-                    modifier = Modifier.testTag("check_update_row"),
-                )
+            if (showAppUpdates || actions.onOpenAbout != null) SettingsSection(title = "应用") {
+                if (showAppUpdates) {
+                    SettingsRow(
+                        label = "检查更新",
+                        value = updateSummary,
+                        leading = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },
+                        onClick = actions.onCheckForUpdates,
+                        modifier = Modifier.testTag("check_update_row"),
+                    )
+                }
+                actions.onOpenAbout?.let { onOpenAbout ->
+                    if (showAppUpdates) HorizontalDivider()
+                    SettingsRow(
+                        label = "关于 SniffSubPlayer",
+                        leading = { Icon(Icons.Default.Info, contentDescription = null) },
+                        onClick = onOpenAbout,
+                    )
+                }
             }
         }
     }

@@ -38,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
 import com.sniffsub.sniff_sub_player.ui.components.GlassNavigationBar
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +72,7 @@ import com.sniffsub.sniff_sub_player.browser.rememberBrowserWebViewController
 import com.sniffsub.sniff_sub_player.data.AppPreferences
 import com.sniffsub.sniff_sub_player.player.PlayerPictureInPicture
 import com.sniffsub.sniff_sub_player.player.PlayerScreen
+import com.sniffsub.sniff_sub_player.settings.AboutScreen
 import com.sniffsub.sniff_sub_player.settings.AdBlockSettingsActions
 import com.sniffsub.sniff_sub_player.settings.AdBlockSettingsScreen
 import com.sniffsub.sniff_sub_player.settings.BookmarksActions
@@ -161,6 +163,7 @@ private fun SniffSubPlayerApp(
         SafeUiActionExecutor(coroutineScope, messageController::show)
     }
     val focusManager = LocalFocusManager.current
+    val uriHandler = LocalUriHandler.current
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var selectedCandidate by rememberSaveable(stateSaver = listSaver<MediaCandidate?, Any>(
         save = { candidate -> candidate?.let {
@@ -278,6 +281,7 @@ private fun SniffSubPlayerApp(
                                     showUpdateDialog = true
                                     container.appUpdateManager.check()
                                 },
+                                onOpenAbout = { navController.navigate(ABOUT_ROUTE) },
                             ),
                         )
                     }
@@ -299,6 +303,17 @@ private fun SniffSubPlayerApp(
                                     }
                                 },
                             ),
+                        )
+                    }
+                }
+                composable(ABOUT_ROUTE) {
+                    Surface(modifier = Modifier.fillMaxSize().padding(bottom = 96.dp)) {
+                        AboutScreen(
+                            version = BuildIdentity.displayVersion,
+                            onBack = { navController.popBackStack() },
+                            onOpenLink = { url ->
+                                actionExecutor.launch("无法打开链接") { uriHandler.openUri(url) }
+                            },
                         )
                     }
                 }
@@ -458,6 +473,7 @@ private class BrowserViewModelFactory(
 
 private const val BROWSER_ROUTE = "browser"
 private const val SETTINGS_ROUTE = "settings"
+private const val ABOUT_ROUTE = "about"
 private const val BOOKMARKS_ROUTE = "bookmarks"
 private const val AD_BLOCK_ROUTE = "ad-block"
 private const val PLAYER_ROUTE = "player"
