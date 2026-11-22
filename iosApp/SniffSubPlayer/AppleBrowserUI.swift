@@ -42,6 +42,9 @@ final class AppleBrowserModel: ObservableObject {
         func reportError(message: String) { owner?.errorMessage = message }
 
         func configureWebView(view: WKWebView, onReady: @escaping () -> Void) {
+            if #available(iOS 26.0, *) {
+                view.scrollView.bottomEdgeEffect.isHidden = true
+            }
             guard let manager = owner?.adBlockManager else { onReady(); return }
             manager.applyRules(to: view.configuration.userContentController, completion: onReady)
         }
@@ -75,6 +78,7 @@ struct AppleBrowserScreen: View {
                 addressBar
                 ZStack {
                     NativeBrowserView(host: model.host)
+                        .ignoresSafeArea(.container, edges: .bottom)
                     if model.currentURL.isEmpty { startPage }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

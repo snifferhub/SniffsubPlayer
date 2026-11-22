@@ -32,6 +32,7 @@ struct ContentView: View {
                 selectedCandidate = PlayerPresentation(candidate: candidate)
             }
             .environment(\.horizontalSizeClass, sizeClass)
+            .toolbarBackground(.hidden, for: .tabBar)
             .tabItem { Label("浏览器", systemImage: "globe") }
             .tag(AppTab.browser)
 
