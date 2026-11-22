@@ -1,5 +1,6 @@
 import ComposeApp
 import AVFoundation
+import AVKit
 import MediaPlayer
 import SwiftUI
 import UIKit
@@ -18,6 +19,7 @@ struct PlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("SniffSubPlayer.playerAccentColor") private var playerAccentColorID = PlayerAccentColor.defaultValue
     @State private var player = AVPlayer()
+    @StateObject private var pictureInPicture = PlayerPictureInPicture()
     @State private var timeObserver: Any?
     @State private var itemObservations: [NSKeyValueObservation] = []
     @State private var cues: [SubtitleCue] = []
@@ -67,6 +69,10 @@ struct PlayerView: View {
 
             PlayerLayerView(
                 player: player,
+                pictureInPicture: pictureInPicture,
+                allowsAutomaticPictureInPicture: wantsPlayback && !isScrubbing &&
+                    !showingSubtitleSettings && !showingSubtitleSearch &&
+                    !showingSubtitleImporter && !showingPasteSheet,
                 systemVolume: systemVolume,
                 onSingleTap: toggleControlsVisibility,
                 onDoubleTap: handleDoubleTap,
@@ -76,8 +82,27 @@ struct PlayerView: View {
                 canSeek: playbackRange != nil
             )
                 .ignoresSafeArea()
+                .allowsHitTesting(!pictureInPicture.isPresenting)
 
-            if isHoldingSpeed {
+            if pictureInPicture.isPresenting {
+                Button {
+                    pictureInPicture.stop()
+                } label: {
+                    Label {
+                        Text("返回全屏")
+                    } icon: {
+                        Image(uiImage: AVPictureInPictureController.pictureInPictureButtonStopImage)
+                            .renderingMode(.template)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                    .background(.ultraThinMaterial, in: Capsule())
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            if !pictureInPicture.isPresenting && isHoldingSpeed {
                 Label(rateLabel(effectivePlaybackRate), systemImage: "forward.fill")
                     .font(.headline.monospacedDigit())
                     .foregroundStyle(.white)
@@ -89,7 +114,7 @@ struct PlayerView: View {
                     .allowsHitTesting(false)
             }
 
-            if showSeekFeedback {
+            if !pictureInPicture.isPresenting && showSeekFeedback {
                 Label(seekFeedbackText, systemImage: seekFeedbackIcon)
                     .font(.headline)
                     .foregroundStyle(.white)
@@ -102,7 +127,7 @@ struct PlayerView: View {
                     .allowsHitTesting(false)
             }
 
-            if !subtitleText.isEmpty {
+            if !pictureInPicture.isPresenting && !subtitleText.isEmpty {
                 Text(subtitleText)
                     .font(.system(size: subtitleSize, weight: .bold))
                     .foregroundStyle(.white)
@@ -115,7 +140,7 @@ struct PlayerView: View {
                     .allowsHitTesting(false)
             }
 
-            if showControls {
+            if !pictureInPicture.isPresenting && showControls {
                 controls
                     .transition(.opacity)
             }
@@ -130,6 +155,20 @@ struct PlayerView: View {
         .onChange(of: playbackRate) { _ in
             applyPlaybackRate()
             keepControlsVisibleForInteraction()
+        }
+        .onChange(of: pictureInPicture.isPresenting) { isPresenting in
+            if isPresenting {
+                hideControlsTask?.cancel()
+            } else {
+                wantsPlayback = player.timeControlStatus != .paused
+                isPlaying = player.timeControlStatus == .playing
+                keepControlsVisibleForInteraction()
+            }
+        }
+        .onChange(of: pictureInPicture.errorMessage) { message in
+            if message != nil {
+                keepControlsVisibleForInteraction()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
             setHoldingSpeed(false)
@@ -164,6 +203,7 @@ struct PlayerView: View {
             scheduleControlsAutoHide()
         }
         .onDisappear {
+            pictureInPicture.stop()
             hideControlsTask?.cancel()
             seekFeedbackTask?.cancel()
             seekRevision += 1
@@ -217,8 +257,9 @@ struct PlayerView: View {
                     }
                     .accessibilityLabel("关闭播放器")
 
-                    if !status.isEmpty {
-                        Text(status)
+                    let playerStatus = pictureInPicture.errorMessage ?? status
+                    if !playerStatus.isEmpty {
+                        Text(playerStatus)
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.76))
                             .lineLimit(1)
@@ -226,6 +267,20 @@ struct PlayerView: View {
                     }
 
                     Spacer()
+
+                    if AVPictureInPictureController.isPictureInPictureSupported() {
+                        Button {
+                            setHoldingSpeed(false)
+                            pictureInPicture.start()
+                        } label: {
+                            Image(uiImage: AVPictureInPictureController.pictureInPictureButtonStartImage)
+                                .renderingMode(.template)
+                                .frame(width: 44, height: 38)
+                                .background(.ultraThinMaterial, in: Capsule())
+                        }
+                        .disabled(!pictureInPicture.isPossible || isScrubbing)
+                        .accessibilityLabel("画中画")
+                    }
 
                     Menu {
                         Picker("播放速度", selection: $playbackRate) {
@@ -1183,8 +1238,114 @@ final class PlayerSystemVolumeControl {
     }
 }
 
+@MainActor
+final class PlayerPictureInPicture: NSObject, ObservableObject, AVPictureInPictureControllerDelegate {
+    @Published private(set) var isPossible = false
+    @Published private(set) var isPresenting = false
+    @Published private(set) var errorMessage: String?
+
+    private var controller: AVPictureInPictureController?
+    private var possibilityObservation: NSKeyValueObservation?
+    private var isRestoringPlayer = false
+
+    func attach(to layer: AVPlayerLayer) {
+        guard AVPictureInPictureController.isPictureInPictureSupported(),
+              let controller = AVPictureInPictureController(playerLayer: layer) else { return }
+
+        self.controller = controller
+        controller.delegate = self
+        possibilityObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) {
+            [weak self] observedController, _ in
+            let controllerID = ObjectIdentifier(observedController)
+            DispatchQueue.main.async {
+                guard let self, let controller = self.controller, ObjectIdentifier(controller) == controllerID else { return }
+                self.isPossible = controller.isPictureInPicturePossible
+            }
+        }
+    }
+
+    func detach(from layer: AVPlayerLayer) {
+        guard let controller, controller.playerLayer === layer else { return }
+        stop()
+        controller.delegate = nil
+        possibilityObservation?.invalidate()
+        possibilityObservation = nil
+        self.controller = nil
+    }
+
+    func setAllowsAutomaticStart(_ allowsAutomaticStart: Bool) {
+        if let controller, controller.canStartPictureInPictureAutomaticallyFromInline != allowsAutomaticStart {
+            controller.canStartPictureInPictureAutomaticallyFromInline = allowsAutomaticStart
+        }
+    }
+
+    func start() {
+        guard let controller, controller.isPictureInPicturePossible, !isPresenting else { return }
+        errorMessage = nil
+        controller.startPictureInPicture()
+    }
+
+    func stop() {
+        if let controller, controller.isPictureInPictureActive {
+            controller.stopPictureInPicture()
+        }
+    }
+
+    nonisolated func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        let controllerID = ObjectIdentifier(controller)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.controller.map(ObjectIdentifier.init) == controllerID else { return }
+            self.isRestoringPlayer = false
+            self.errorMessage = nil
+            self.isPresenting = true
+        }
+    }
+
+    nonisolated func pictureInPictureController(
+        _ controller: AVPictureInPictureController,
+        failedToStartPictureInPictureWithError error: Error
+    ) {
+        let controllerID = ObjectIdentifier(controller)
+        let message = "画中画启动失败：\(error.localizedDescription)"
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.controller.map(ObjectIdentifier.init) == controllerID else { return }
+            self.isPresenting = false
+            self.errorMessage = message
+        }
+    }
+
+    nonisolated func pictureInPictureController(
+        _ controller: AVPictureInPictureController,
+        restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping @Sendable (Bool) -> Void
+    ) {
+        // The fullscreen player stays presented, including its current playback item.
+        let controllerID = ObjectIdentifier(controller)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let controller = self.controller, ObjectIdentifier(controller) == controllerID else {
+                completionHandler(false)
+                return
+            }
+            self.isRestoringPlayer = controller.playerLayer.player?.currentItem != nil
+            completionHandler(self.isRestoringPlayer)
+        }
+    }
+
+    nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
+        let controllerID = ObjectIdentifier(controller)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let controller = self.controller, ObjectIdentifier(controller) == controllerID else { return }
+            if !self.isRestoringPlayer && UIApplication.shared.applicationState == .background {
+                controller.playerLayer.player?.pause()
+            }
+            self.isPresenting = false
+        }
+    }
+}
+
 struct PlayerLayerView: UIViewRepresentable {
     let player: AVPlayer
+    let pictureInPicture: PlayerPictureInPicture
+    let allowsAutomaticPictureInPicture: Bool
     let systemVolume: PlayerSystemVolumeControl
     let onSingleTap: () -> Void
     let onDoubleTap: (PlayerSeekDirection) -> Void
@@ -1195,6 +1356,7 @@ struct PlayerLayerView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
+            pictureInPicture: pictureInPicture,
             onSingleTap: onSingleTap,
             onDoubleTap: onDoubleTap,
             onPan: onPan,
@@ -1207,6 +1369,7 @@ struct PlayerLayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> PlayerLayerContainerView {
         let view = PlayerLayerContainerView()
         view.playerLayer.player = player
+        pictureInPicture.attach(to: view.playerLayer)
         view.addSubview(systemVolume.view)
 
         let singleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSingleTap))
@@ -1232,7 +1395,10 @@ struct PlayerLayerView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PlayerLayerContainerView, context: Context) {
-        uiView.playerLayer.player = player
+        if uiView.playerLayer.player !== player {
+            uiView.playerLayer.player = player
+        }
+        pictureInPicture.setAllowsAutomaticStart(allowsAutomaticPictureInPicture)
         context.coordinator.onSingleTap = onSingleTap
         context.coordinator.onDoubleTap = onDoubleTap
         context.coordinator.onPan = onPan
@@ -1242,11 +1408,13 @@ struct PlayerLayerView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ view: PlayerLayerContainerView, coordinator: Coordinator) {
+        coordinator.pictureInPicture.detach(from: view.playerLayer)
         coordinator.onHoldChanged(false)
         view.playerLayer.player = nil
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        let pictureInPicture: PlayerPictureInPicture
         var onSingleTap: () -> Void
         var onDoubleTap: (PlayerSeekDirection) -> Void
         var onPan: (PlayerPanEvent) -> Void
@@ -1256,6 +1424,7 @@ struct PlayerLayerView: UIViewRepresentable {
         private var activeVerticalControl: PlayerVerticalControl = .brightness
 
         init(
+            pictureInPicture: PlayerPictureInPicture,
             onSingleTap: @escaping () -> Void,
             onDoubleTap: @escaping (PlayerSeekDirection) -> Void,
             onPan: @escaping (PlayerPanEvent) -> Void,
@@ -1263,6 +1432,7 @@ struct PlayerLayerView: UIViewRepresentable {
             onHoldChanged: @escaping (Bool) -> Void,
             canSeek: Bool
         ) {
+            self.pictureInPicture = pictureInPicture
             self.onSingleTap = onSingleTap
             self.onDoubleTap = onDoubleTap
             self.onPan = onPan

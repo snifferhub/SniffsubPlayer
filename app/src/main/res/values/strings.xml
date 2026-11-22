@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SniffSubPlayer</string>
+    <string name="player_picture_in_picture">画中画</string>
+    <string name="player_picture_in_picture_unavailable">暂时无法开启画中画</string>
 </resources>

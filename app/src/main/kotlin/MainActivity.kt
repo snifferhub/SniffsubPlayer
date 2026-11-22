@@ -1,6 +1,10 @@
 package com.sniffsub.sniff_sub_player
 
+import android.app.PictureInPictureUiState
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
+import androidx.annotation.RequiresApi
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -65,6 +69,7 @@ import com.sniffsub.sniff_sub_player.browser.MediaCandidate
 import com.sniffsub.sniff_sub_player.browser.MediaKind
 import com.sniffsub.sniff_sub_player.browser.rememberBrowserWebViewController
 import com.sniffsub.sniff_sub_player.data.AppPreferences
+import com.sniffsub.sniff_sub_player.player.PlayerPictureInPicture
 import com.sniffsub.sniff_sub_player.player.PlayerScreen
 import com.sniffsub.sniff_sub_player.settings.AdBlockSettingsActions
 import com.sniffsub.sniff_sub_player.settings.AdBlockSettingsScreen
@@ -77,6 +82,8 @@ import com.sniffsub.sniff_sub_player.updates.AndroidAppUpdateDialog
 import com.sniffsub.sniff_sub_player.updates.UpdateStage
 
 class MainActivity : ComponentActivity() {
+    private val pictureInPicture by lazy { PlayerPictureInPicture(this) }
+
     private val appContainer: AppContainer
         get() = (application as SniffSubPlayerApplication).container
 
@@ -92,9 +99,30 @@ class MainActivity : ComponentActivity() {
                 SniffSubPlayerApp(
                     container = appContainer,
                     browserViewModel = browserViewModel,
+                    pictureInPicture = pictureInPicture,
                 )
             }
         }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            pictureInPicture.enterOnUserLeave()
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    override fun onPictureInPictureUiStateChanged(pipState: PictureInPictureUiState) {
+        super.onPictureInPictureUiStateChanged(pipState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && pipState.isTransitioningToPip) {
+            pictureInPicture.isShowing = true
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pictureInPicture.isShowing = isInPictureInPictureMode
     }
 }
 
@@ -102,6 +130,7 @@ class MainActivity : ComponentActivity() {
 private fun SniffSubPlayerApp(
     container: AppContainer,
     browserViewModel: BrowserViewModel,
+    pictureInPicture: PlayerPictureInPicture,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -338,6 +367,7 @@ private fun SniffSubPlayerApp(
                         PlayerScreen(
                             candidate = candidate,
                             subtitleRepository = container.subtitleRepository,
+                            pictureInPicture = pictureInPicture,
                             onBack = {
                                 navController.popBackStack()
                             },
@@ -387,15 +417,17 @@ private fun SniffSubPlayerApp(
             navController.popBackStack()
         }
 
-        UiMessageHost(
-            message = globalMessage,
-            onConsumed = messageController::consume,
-            modifier = Modifier
-                .zIndex(3f)
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = if (currentRoute == PLAYER_ROUTE) 16.dp else 96.dp),
-        )
+        if (!pictureInPicture.isShowing) {
+            UiMessageHost(
+                message = globalMessage,
+                onConsumed = messageController::consume,
+                modifier = Modifier
+                    .zIndex(3f)
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = if (currentRoute == PLAYER_ROUTE) 16.dp else 96.dp),
+            )
+        }
         if (showUpdateDialog && currentRoute == SETTINGS_ROUTE) {
             AndroidAppUpdateDialog(
                 state = updateState,

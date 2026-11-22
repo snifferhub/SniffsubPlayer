@@ -4,8 +4,10 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.graphics.Rect
 import android.view.LayoutInflater
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -25,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Subtitles
@@ -50,8 +53,11 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -65,10 +71,12 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.MediaSession
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.lifecycle.Lifecycle
@@ -88,9 +96,10 @@ private val PlayerAccent = Color(0xFFFF9FBD)
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-fun PlayerScreen(
+internal fun PlayerScreen(
     candidate: MediaCandidate,
     subtitleRepository: SubtitleRepository,
+    pictureInPicture: PlayerPictureInPicture,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -113,6 +122,11 @@ fun PlayerScreen(
         createPlayer(context, candidate)
     }
     val attachedView = remember(player) { arrayOfNulls<PlayerView>(1) }
+    var videoSize by remember(player) { mutableStateOf(player.videoSize) }
+    var canEnterPictureInPicture by remember(player) { mutableStateOf(false) }
+    var autoEnterPictureInPicture by remember(player) { mutableStateOf(false) }
+    var playerBounds by remember { mutableStateOf<Rect?>(null) }
+    val isInPictureInPicture = pictureInPicture.isShowing
     val temporarySpeed = remember(player) {
         TemporaryPlaybackSpeed({ player.playbackParameters }, { player.playbackParameters = it })
     }
@@ -160,6 +174,7 @@ fun PlayerScreen(
     }
 
     fun exitPlayback() {
+        pictureInPicture.updateVideo(null, VideoSize.UNKNOWN, autoEnter = false)
         gesturesEnabled = false
         cancelGestures()
         attachedView[0]?.player = null
@@ -168,7 +183,7 @@ fun PlayerScreen(
         onBack()
     }
 
-    BackHandler {
+    BackHandler(enabled = !isInPictureInPicture) {
         if (showSubtitleSearch) showSubtitleSearch = false else exitPlayback()
     }
 
@@ -195,13 +210,67 @@ fun PlayerScreen(
         onDispose { levelControls.restoreBrightness() }
     }
 
-    DisposableEffect(player) {
+    DisposableEffect(player, lifecycle, pictureInPicture) {
+        fun updatePictureInPicturePlayback() {
+            videoSize = player.videoSize
+            canEnterPictureInPicture = videoSize.width > 0 && videoSize.height > 0 &&
+                player.playerError == null &&
+                (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_BUFFERING)
+            autoEnterPictureInPicture = canEnterPictureInPicture && player.playWhenReady
+        }
+
+        var mediaSession: MediaSession? = null
+        var resumePlayback = false
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    if (pictureInPicture.isSupported) {
+                        mediaSession = MediaSession.Builder(context, player).build()
+                    }
+                    if (resumePlayback) {
+                        resumePlayback = false
+                        player.play()
+                    }
+                }
+                Lifecycle.Event.ON_RESUME -> gesturesEnabled = true
+                Lifecycle.Event.ON_PAUSE -> {
+                    gesturesEnabled = false
+                    cancelGestures()
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    mediaSession?.release()
+                    mediaSession = null
+                    resumePlayback = player.playWhenReady
+                    player.pause()
+                }
+                else -> Unit
+            }
+        }
+        val listener = object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                updatePictureInPicturePlayback()
+            }
+        }
+        player.addListener(listener)
+        lifecycle.addObserver(lifecycleObserver)
+        updatePictureInPicturePlayback()
         onDispose {
+            pictureInPicture.updateVideo(null, VideoSize.UNKNOWN, autoEnter = false)
+            lifecycle.removeObserver(lifecycleObserver)
+            player.removeListener(listener)
+            mediaSession?.release()
             temporarySpeed.stop()
             attachedView[0]?.player = null
             player.playWhenReady = false
             player.clearVideoSurface()
             player.release()
+        }
+    }
+
+    SideEffect {
+        if (!isInPictureInPicture) {
+            val source = playerBounds.takeIf { canEnterPictureInPicture && !showSubtitleSearch }
+            pictureInPicture.updateVideo(source, videoSize, autoEnterPictureInPicture)
         }
     }
 
@@ -232,27 +301,6 @@ fun PlayerScreen(
             lifecycle.removeObserver(observer)
             if (!wasKeepingScreenOn) window?.clearFlags(flag)
         }
-    }
-
-    DisposableEffect(player, lifecycle) {
-        var resumePlayback = false
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
-                gesturesEnabled = false
-                cancelGestures()
-            } else if (event == Lifecycle.Event.ON_RESUME) {
-                gesturesEnabled = true
-            }
-            if (event == Lifecycle.Event.ON_STOP) {
-                resumePlayback = player.playWhenReady
-                player.pause()
-            } else if (event == Lifecycle.Event.ON_RESUME && resumePlayback) {
-                resumePlayback = false
-                player.play()
-            }
-        }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(player, cues) {
@@ -317,8 +365,43 @@ fun PlayerScreen(
                 it.player = null
                 if (attachedView[0] === it) attachedView[0] = null
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().onGloballyPositioned { coordinates ->
+                if (!isInPictureInPicture) {
+                    val bounds = coordinates.boundsInWindow()
+                    playerBounds = Rect(
+                        bounds.left.roundToInt(),
+                        bounds.top.roundToInt(),
+                        bounds.right.roundToInt(),
+                        bounds.bottom.roundToInt(),
+                    )
+                }
+            },
         )
+
+        if (currentSubtitle.isNotBlank()) {
+            val subtitleBottom = when {
+                isInPictureInPicture -> 10.dp
+                controlsVisible -> 74.dp
+                else -> 28.dp
+            }
+            Text(
+                text = currentSubtitle,
+                color = Color.White,
+                textAlign = TextAlign.Center,
+                fontWeight = FontWeight.Bold,
+                style = if (isInPictureInPicture) {
+                    MaterialTheme.typography.bodySmall
+                } else {
+                    MaterialTheme.typography.titleLarge
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(0.88f)
+                    .padding(bottom = subtitleBottom),
+            )
+        }
+
+        if (isInPictureInPicture) return@Box
 
         PlayerGestureSurface(
             enabled = gesturesEnabled,
@@ -391,20 +474,6 @@ fun PlayerScreen(
                 .testTag("player_gesture_surface"),
         )
 
-        if (currentSubtitle.isNotBlank()) {
-            Text(
-                text = currentSubtitle,
-                color = Color.White,
-                textAlign = TextAlign.Center,
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(0.88f)
-                    .padding(bottom = if (controlsVisible) 74.dp else 28.dp),
-            )
-        }
-
         AnimatedVisibility(
             visible = controlsVisible,
             enter = fadeIn(),
@@ -417,6 +486,15 @@ fun PlayerScreen(
                 durationMs = durationMs,
                 statusText = statusText,
                 hasSubtitles = cues.isNotEmpty(),
+                showPictureInPictureButton = pictureInPicture.isSupported,
+                pictureInPictureEnabled = canEnterPictureInPicture && playerBounds?.isEmpty == false,
+                onPictureInPicture = {
+                    cancelGestures()
+                    if (!pictureInPicture.enter()) {
+                        Toast.makeText(context, R.string.player_picture_in_picture_unavailable, Toast.LENGTH_SHORT)
+                            .show()
+                    }
+                },
                 onClose = ::exitPlayback,
                 onSubtitles = {
                     cancelGestures()
@@ -510,6 +588,9 @@ private fun PlayerControls(
     durationMs: Long,
     statusText: String,
     hasSubtitles: Boolean,
+    showPictureInPictureButton: Boolean,
+    pictureInPictureEnabled: Boolean,
+    onPictureInPicture: () -> Unit,
     onClose: () -> Unit,
     onSubtitles: () -> Unit,
     onSeekBack: () -> Unit,
@@ -554,6 +635,17 @@ private fun PlayerControls(
                 )
             }
             Spacer(Modifier.weight(1f))
+            if (showPictureInPictureButton) {
+                PlayerControlButton(
+                    icon = Icons.Default.PictureInPictureAlt,
+                    contentDescription = stringResource(R.string.player_picture_in_picture),
+                    onClick = onPictureInPicture,
+                    size = 42.dp,
+                    iconSize = 22.dp,
+                    enabled = pictureInPictureEnabled,
+                )
+                Spacer(Modifier.width(10.dp))
+            }
             Surface(
                 onClick = onSubtitles,
                 color = Color.White.copy(alpha = 0.16f),
@@ -666,15 +758,17 @@ private fun PlayerControlButton(
     iconSize: Dp,
     centerLabel: String? = null,
     mirrorIcon: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Surface(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier
             .size(size)
             .shadow(12.dp, CircleShape),
         shape = CircleShape,
         color = Color.White.copy(alpha = 0.18f),
-        contentColor = Color.White,
+        contentColor = Color.White.copy(alpha = if (enabled) 1f else 0.38f),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
