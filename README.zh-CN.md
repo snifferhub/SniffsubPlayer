@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="iosApp/SniffSubPlayer/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="112" height="112" alt="SniffSubPlayer 金色小狗应用图标" style="border-radius: 22%;">
+  <img src="docs/readme-icon.png" width="112" height="112" alt="SniffSubPlayer 应用图标">
 </p>
 
 <h1 align="center">SniffSubPlayer</h1>
